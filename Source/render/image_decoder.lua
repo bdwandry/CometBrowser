@@ -1,0 +1,194 @@
+-- 100% Pure On-Device Multi-Format Image Engine for CometBrowser
+-- Uses HttpClient for sequential image downloads after page load.
+import "core/url"
+import "core/http_client"
+import "render/style"
+import "render/decoders/dither"
+import "render/decoders/bmp"
+import "render/decoders/gif"
+import "render/decoders/png"
+import "render/decoders/svg"
+import "render/decoders/jpeg"
+
+ImageDecoder = {}
+local gfx = playdate.graphics
+
+-- In-memory cache: url -> playdate.graphics.image | false
+local imageCache     = {}
+local downloadQueue  = {}
+local isDownloading  = false
+
+function ImageDecoder.clearCache()
+    imageCache    = {}
+    downloadQueue = {}
+    isDownloading = false
+end
+
+local function decodeRawImageData(data, url)
+    if not data or #data < 4 then return nil end
+
+    local b1, b2, b3, b4 = string.byte(data, 1, 4)
+
+    -- PNG: 0x89 P N G
+    if b1 == 0x89 and b2 == 0x50 and b3 == 0x4E and b4 == 0x47 then
+        local ok, img = pcall(function() return PNGDecoder.decode(data) end)
+        if ok and img then return img end
+    end
+
+    -- GIF87a / GIF89a
+    local gifSig = string.sub(data, 1, 6)
+    if gifSig == "GIF87a" or gifSig == "GIF89a" then
+        local ok, img = pcall(function() return GIFDecoder.decode(data) end)
+        if ok and img then return img end
+    end
+
+    -- BMP: BM
+    if string.sub(data, 1, 2) == "BM" then
+        local ok, img = pcall(function() return BMPDecoder.decode(data) end)
+        if ok and img then return img end
+    end
+
+    -- JPEG: FF D8
+    if b1 == 0xFF and b2 == 0xD8 then
+        local ok, img = pcall(function() return JPEGDecoder.decode(data) end)
+        if ok and img then return img end
+    end
+
+    -- SVG
+    local head = string.lower(string.sub(data, 1, 200))
+    if string.find(head, "<svg") or string.find(head, "<?xml") then
+        local ok, img = pcall(function() return SVGDecoder.decode(data) end)
+        if ok and img then return img end
+    end
+
+    return nil
+end
+
+local function processNextImage()
+    if isDownloading or #downloadQueue == 0 then return end
+
+    -- Don't download images while the main page is loading
+    if HttpClient.isLoading() then return end
+
+    local url = table.remove(downloadQueue, 1)
+
+    if imageCache[url] ~= nil then
+        processNextImage()
+        return
+    end
+
+    isDownloading = true
+
+    HttpClient.get(url, {
+        onSuccess = function(status, headers, body, finalUrl)
+            if body and #body > 8 then
+                local img = decodeRawImageData(body, url)
+                imageCache[url] = img or false
+            else
+                imageCache[url] = false
+            end
+            isDownloading = false
+            -- Wait one frame before next download to not starve main loop
+            playdate.timer.performAfterDelay(16, function()
+                processNextImage()
+            end)
+        end,
+        onError = function(err)
+            imageCache[url] = false
+            isDownloading = false
+            playdate.timer.performAfterDelay(16, function()
+                processNextImage()
+            end)
+        end
+    })
+end
+
+function ImageDecoder.update()
+    -- Called every frame from main.lua to pump the image download queue
+    if not isDownloading and #downloadQueue > 0 and not HttpClient.isLoading() then
+        processNextImage()
+    end
+end
+
+function ImageDecoder.enqueue(src)
+    if not src or src == "" then return end
+    if imageCache[src] ~= nil then return end
+    for _, qu in ipairs(downloadQueue) do
+        if qu == src then return end
+    end
+    table.insert(downloadQueue, src)
+end
+
+function ImageDecoder.draw(x, y, w, h, altText, href, isSelected, src)
+    x = math.floor(x or 0)
+    y = math.floor(y or 0)
+    w = math.floor(math.max(w or 80, 40))
+    h = math.floor(math.max(h or 40, 20))
+    if w > 360 then w = 360 end
+    if h > 180 then h = 180 end
+
+    -- Try cache first
+    if src and src ~= "" then
+        local cached = imageCache[src]
+        if cached and cached ~= false then
+            -- Draw dithered image, scaled to fit box
+            local iw, ih = cached:getSize()
+            if iw > 0 and ih > 0 then
+                local scaleX = w / iw
+                local scaleY = h / ih
+                local scale  = math.min(scaleX, scaleY)
+                local dw     = math.floor(iw * scale)
+                local dh     = math.floor(ih * scale)
+                local dx     = x + math.floor((w - dw) / 2)
+                local dy     = y + math.floor((h - dh) / 2)
+                cached:drawScaled(dx, dy, scale)
+            else
+                cached:draw(x, y)
+            end
+            if isSelected then
+                gfx.setColor(gfx.kColorBlack)
+                gfx.setLineWidth(2)
+                gfx.drawRoundRect(x, y, w, h, 4)
+                gfx.setLineWidth(1)
+            end
+            return
+        elseif cached == nil then
+            -- Enqueue for background download
+            ImageDecoder.enqueue(src)
+        end
+    end
+
+    -- Draw Loading Placeholder Card
+    gfx.setColor(gfx.kColorWhite)
+    gfx.fillRoundRect(x, y, w, h, 4)
+    gfx.setColor(gfx.kColorBlack)
+    gfx.drawRoundRect(x, y, w, h, 4)
+
+    -- Hatch pattern
+    for hx = x + 4, x + w - 4, 10 do
+        gfx.drawLine(hx, y + 3, hx, y + h - 3)
+    end
+
+    -- Camera icon
+    local iconX = x + math.floor(w / 2) - 8
+    local iconY = y + math.floor(h / 2) - 6
+    gfx.setColor(gfx.kColorBlack)
+    gfx.drawRoundRect(iconX, iconY, 16, 11, 2)
+    gfx.fillCircleAtPoint(iconX + 8, iconY + 5, 3)
+    gfx.drawPixel(iconX + 13, iconY + 1)
+
+    -- Alt text
+    if altText and altText ~= "" and h > 30 then
+        local font  = Style.fontSmall or gfx.getFont()
+        gfx.setFont(font)
+        local label = #altText > 26 and string.sub(altText, 1, 23) .. "..." or altText
+        local lw    = Style.getTextWidth(font, label)
+        local lx    = x + math.floor((w - lw) / 2)
+        local ly    = iconY + 14
+        if ly + 10 <= y + h - 2 then
+            gfx.drawText(label, lx, ly)
+        end
+    end
+
+    gfx.setImageDrawMode(gfx.kDrawModeCopy)
+end

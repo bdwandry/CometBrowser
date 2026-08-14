@@ -1,0 +1,50 @@
+-- CometBrowser Constants
+Constants = {}
+
+-- Display & Screen Geometry
+Constants.SCREEN_WIDTH = 400
+Constants.SCREEN_HEIGHT = 240
+Constants.CHROME_HEIGHT = 24
+Constants.CONTENT_Y = 24
+Constants.CONTENT_HEIGHT = 216
+Constants.CONTENT_WIDTH = 400
+Constants.CONTENT_MARGIN = 8
+Constants.CONTENT_TEXT_WIDTH = 384
+Constants.SCROLLBAR_WIDTH = 5
+
+-- View States
+Constants.STATE_HOME = "home"
+Constants.STATE_LOADING = "loading"
+Constants.STATE_PAGE = "page"
+Constants.STATE_ERROR = "error"
+Constants.STATE_BOOKMARKS = "bookmarks"
+Constants.STATE_HISTORY = "history"
+
+-- 100% Pure On-Device Browsing Modes
+Constants.MODE_READER   = "reader"
+Constants.MODE_RAW_HTML = "html"
+Constants.MODE_OPERA_DS = "ds"
+
+-- Search Engines
+Constants.SEARCH_ENGINES = {
+    { name = "DuckDuckGo Lite", url = "https://html.duckduckgo.com/html/?q=" },
+    { name = "FrogFind (Fast Text)", url = "http://frogfind.com/?q=" },
+    { name = "Wiby (Classic Web)", url = "https://wiby.me/?q=" },
+    { name = "Wikipedia Search", url = "https://en.wikipedia.org/wiki/Special:Search?search=" }
+}
+
+-- Default Start Page Speed Dials
+Constants.DEFAULT_BOOKMARKS = {
+    { title = "Bryan Wandrych", url = "https://bryanwandrych.com", desc = "Personal site & portfolio" },
+    { title = "Playdate Developer", url = "https://play.date/dev", desc = "Documentation & SDK" },
+    { title = "Hacker News", url = "https://news.ycombinator.com", desc = "Tech news & discussion" },
+    { title = "Wikipedia", url = "https://en.wikipedia.org/wiki/Main_Page", desc = "Free encyclopedia" },
+    { title = "DuckDuckGo Lite", url = "https://html.duckduckgo.com/html/", desc = "Fast private search" },
+    { title = "FrogFind", url = "http://frogfind.com", desc = "Text web for vintage devices" },
+    { title = "Wiby Search", url = "https://wiby.me", desc = "Search engine for simple web" },
+    { title = "Motherfucking Website", url = "https://motherfuckingwebsite.com", desc = "Lightweight pure HTML" },
+    { title = "Dan Luu's Blog", url = "https://danluu.com", desc = "Engineering essays & blogs" }
+}
+
+-- User-Agent
+Constants.USER_AGENT = "Mozilla/5.0 (Playdate OS 2.7; 400x240; 1-bit Mono) CometBrowser/1.0"

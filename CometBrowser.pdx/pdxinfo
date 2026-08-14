@@ -1,0 +1,9 @@
+name=CometBrowser
+author=Bryan Wandrych
+description=Fast, general-purpose web browser for Playdate with HTML & image rendering
+bundleID=com.bryanwandrych.cometbrowser
+version=1.0.0
+buildNumber=1
+imagePath=assets/launcher
+pdxversion=30101
+buildtime=840054944

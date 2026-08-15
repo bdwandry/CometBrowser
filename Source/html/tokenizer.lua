@@ -3,7 +3,7 @@ import "html/entities"
 
 Tokenizer = {}
 
-local MAX_HTML_SIZE = 131072 -- 128KB max buffer size
+local MAX_HTML_SIZE = 262144 -- 256KB max buffer size
 
 -- Find the closing ">" of a tag, ignoring ">" that appear inside quoted attribute values
 local function findTagEnd(html, startPos)
@@ -43,6 +43,19 @@ local function parseAttributes(attrStr)
         local lkey = string.lower(key)
         if not attrs[lkey] then
             attrs[lkey] = Entities.decode(val)
+        end
+    end
+
+    -- Boolean attributes (checked, selected, disabled, open, ...): bare
+    -- names with no "=" get the value true. Quoted and unquoted values are
+    -- masked out first so words inside values aren't mistaken for names.
+    local bare = string.gsub(attrStr, '="[^"]*"', " ")
+    bare = string.gsub(bare, "='[^']*'", " ")
+    bare = string.gsub(bare, "=%s*[%w%-_%.%/%?%#]+", " ")
+    for key in string.gmatch(bare, "([%w%-_:]+)") do
+        local lkey = string.lower(key)
+        if attrs[lkey] == nil then
+            attrs[lkey] = true
         end
     end
 
@@ -123,7 +136,7 @@ function Tokenizer.tokenize(html)
                 pos = len + 1
             end
 
-        -- 4. Skip <svg> ... </svg>
+        -- 4. Skip <svg> ... </svg>  and  <math> ... </math>
         elseif string.match(rawInside, "^[sS][vV][gG]") then
             local svgClose = string.find(html, "</[sS][vV][gG]>", tagEnd, false)
             if svgClose then
@@ -132,18 +145,16 @@ function Tokenizer.tokenize(html)
             else
                 pos = len + 1
             end
-
-        -- 5. Skip <noscript> ... </noscript>
-        elseif string.match(rawInside, "^[nN][oO][sS][cC][rR][iI][pP][tT]") then
-            local noscriptClose = string.find(html, "</[nN][oO][sS][cC][rR][iI][pP][tT]>", tagEnd, false)
-            if noscriptClose then
-                local nextGt = string.find(html, ">", noscriptClose, true)
-                pos = (nextGt or noscriptClose) + 1
+        elseif string.match(rawInside, "^[mM][aA][tT][hH]") then
+            local mathClose = string.find(html, "</[mM][aA][tT][hH]>", tagEnd, false)
+            if mathClose then
+                local nextGt = string.find(html, ">", mathClose, true)
+                pos = (nextGt or mathClose) + 1
             else
                 pos = len + 1
             end
 
-        -- 6. Page <title>
+        -- 5. Page <title>
         elseif string.match(rawInside, "^[tT][iI][tT][lL][eE]") then
             local titleClose = string.find(html, "</[tT][iI][tT][lL][eE]>", tagEnd, false)
             if titleClose then

@@ -16,11 +16,12 @@ function LinkManager.clearSelection()
     LinkManager.selectedIndex = nil
 end
 
-function LinkManager.addLinkRect(href, text, rect)
+function LinkManager.addLinkRect(href, text, rect, anchorIndex)
     if not href or href == "" or not rect then return end
 
     local lastLink = LinkManager.links[#LinkManager.links]
-    if lastLink and lastLink.href == href and lastLink.text == text then
+    if lastLink and lastLink.href == href and lastLink.text == text
+       and (anchorIndex == nil or lastLink.anchorIndex == anchorIndex) then
         table.insert(lastLink.rects, rect)
         return
     end
@@ -29,6 +30,7 @@ function LinkManager.addLinkRect(href, text, rect)
         index = #LinkManager.links + 1,
         href = href,
         text = text or href,
+        anchorIndex = anchorIndex,
         rects = { rect },
         primaryRect = rect
     })

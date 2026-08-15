@@ -49,6 +49,73 @@ local INTERNAL_PAGES = {
     ["about:blank"] = {
         title = "Blank",
         html  = "<html><body></body></html>"
+    },
+    ["about:acidtest"] = {
+        title = "HTML Acid Test",
+        html  = [[
+<html><head><title>HTML Renderer Test Suite</title></head><body>
+
+<h1>HTML Renderer Test</h1>
+<p>Every block &amp; inline element the renderer understands, in one page. Some <b>bold</b>, <i>italic</i>, <u>underlined</u>, <s>struck</s>, <code>code</code>, <mark>marked</mark>, <small>small</small>, <big>big</big> and <sub>sub</sub>/<sup>sup</sup> text, plus an <a href="https://example.com">example link</a> and a <q>short quote</q>.</p>
+
+<h2>Headings &amp; Alignment</h2>
+<h3>Left</h3>
+<div align="center"><p>This paragraph is centered via align.</p></div>
+<p style="text-align:right">This paragraph is right-aligned via inline style.</p>
+
+<h2>Lists</h2>
+<ul><li>Unordered item one</li><li>Item two with a nested list:<ul><li>Nested item A</li><li>Nested item B</li></ul></li><li>Item three</li></ul>
+<ol><li>First ordered</li><li>Second ordered</li><li>Third ordered</li></ol>
+<dl><dt>Definition term</dt><dd>Definition description that runs on for a bit so we can see wrapping work.</dd><dt>Another term</dt><dd>Another description.</dd></dl>
+
+<h2>Quotes &amp; Code</h2>
+<blockquote>This is a block quotation with a left rail, the way desktop browsers draw them.</blockquote>
+<pre>function hello()
+  print("Hello, Playdate")
+end</pre>
+
+<h2>Tables</h2>
+<table>
+<caption>Sample Caption</caption>
+<thead><tr><th>Name</th><th>Score</th><th>Level</th></tr></thead>
+<tbody>
+<tr><td>Bryan</td><td align="right">98</td><td>5</td></tr>
+<tr><td>Comet</td><td align="right">87</td><td>4</td></tr>
+</tbody>
+</table>
+
+<h2>Figures</h2>
+<figure><img src="https://example.com/test.png" width="160" height="80" alt="Alt text placeholder"><figcaption>A figure with a caption</figcaption></figure>
+
+<h2>Forms</h2>
+<form action="https://example.com/search" method="get">
+<label>Search:</label> <input type="text" name="q" placeholder="type here">
+<input type="submit" value="Search">
+<fieldset><legend>Preferences</legend>
+<input type="checkbox" name="opt1" checked> Option one (checked)<br>
+<input type="checkbox" name="opt2"> Option two<br>
+<input type="radio" name="grp" value="a" checked> Radio A
+<input type="radio" name="grp" value="b"> Radio B
+<select name="color"><option selected>Red</option><option>Green</option><option>Blue</option></select>
+</fieldset>
+<textarea name="msg" rows="2">Hello textarea</textarea>
+</form>
+
+<h2>Boxes</h2>
+<details><summary>Clickable summary line</summary><p>Hidden-until-open body content is shown inline on Playdate.</p></details>
+<dialog open><p>A dialog box with an open attribute.</p></dialog>
+
+<h2>Media &amp; Meters</h2>
+<p>Progress: <progress value="70" max="100"></progress>  Meter: <meter value="0.6" max="1"></meter></p>
+<video controls width="300" height="120"><source src="movie.mp4"></video>
+<iframe width="200" height="100"></iframe>
+
+<h2>Horizontal Rule &amp; Misc</h2>
+<hr>
+<p>Entities: &amp; &lt; &gt; &quot; &apos; &nbsp; &copy; &mdash; &hellip; 5 &lt; 6 &amp; 4 = 9</p>
+<p>Unicode fallbacks: &Auml; &ouml; &eacute; &nbsp;</p>
+
+</body></html>]]
     }
 }
 

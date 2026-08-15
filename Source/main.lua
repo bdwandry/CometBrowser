@@ -106,6 +106,9 @@ local function openKeyboardForInput(inputBlock)
         keyboardOpen = false
         local entered = playdate.keyboard.text or ""
         if activeInputField then
+            if activeInputField.maxlength and #entered > activeInputField.maxlength then
+                entered = string.sub(entered, 1, activeInputField.maxlength)
+            end
             activeInputField.value = entered
         end
         activeInputField = nil
@@ -117,19 +120,67 @@ local function submitForm(formAction, inputBlock)
     if not formAction or formAction == "" or formAction == "#" then return end
     local pairs = {}
     for _, item in ipairs(Layout.renderItems or {}) do
-        if item.type == "input_field" and item.formAction == formAction then
+        if item.disabled then
+            -- Disabled controls are never submitted.
+        elseif item.type == "input_field" and item.formAction == formAction then
             if item.name and item.name ~= "" then
                 table.insert(pairs, URL.encode(item.name) .. "=" .. URL.encode(item.value or ""))
             end
+        elseif item.type == "input_submit" and item.formAction == formAction and item.name then
+            table.insert(pairs, URL.encode(item.name) .. "=" .. URL.encode(item.value or ""))
+        elseif item.type == "checkbox_field" and item.formAction == formAction and item.checked then
+            table.insert(pairs, URL.encode(item.name or "") .. "=" .. URL.encode(item.value ~= "" and item.value or "on"))
+        elseif item.type == "select_field" and item.formAction == formAction then
+            local opt = item.options and item.options[item.selectedIndex]
+            if opt and not opt.disabled and not opt.group then
+                table.insert(pairs, URL.encode(item.name or "") .. "=" .. URL.encode(opt.value or opt.text or ""))
+            end
         end
     end
-    if #pairs == 0 and inputBlock then
+    if #pairs == 0 and inputBlock and not inputBlock.disabled then
         table.insert(pairs, URL.encode(inputBlock.name or "q") .. "=" .. URL.encode(inputBlock.value or ""))
     end
     local query = table.concat(pairs, "&")
     local sep = string.find(formAction, "?") and "&" or "?"
     local target = formAction .. (query ~= "" and (sep .. query) or "")
     navigateTo(target)
+end
+
+-- Activate a focused form control: type text / submit the form / toggle a
+-- checkbox or radio / cycle a dropdown selection.
+local function activateFormBlock(block)
+    if not block then return end
+    if block.disabled or block.inert then return end
+    if block.type == "input_field" then
+        Layout.selectedInputItem = block
+        openKeyboardForInput(block)
+    elseif block.type == "input_submit" then
+        submitForm(block.formAction, block)
+    elseif block.type == "checkbox_field" then
+        if block.radio then
+            for _, item in ipairs(Layout.renderItems or {}) do
+                if item.type == "checkbox_field" and item.radio and item.name == block.name and item ~= block then
+                    item.checked = false
+                end
+            end
+            block.checked = true
+        else
+            block.checked = not block.checked
+        end
+        Layout.selectedInputItem = block
+    elseif block.type == "select_field" then
+        local n = #(block.options or {})
+        if n > 0 then
+            local tries = n + 1
+            while tries > 0 do
+                block.selectedIndex = ((block.selectedIndex or 1) % n) + 1
+                local opt = block.options[block.selectedIndex]
+                if not opt.disabled and not opt.group then break end
+                tries = tries - 1
+            end
+        end
+        Layout.selectedInputItem = block
+    end
 end
 
 local function getActiveTotalHeight()
@@ -478,13 +529,8 @@ local function updateFrame()
                     if activeLink then
                         local primary = activeLink.primaryRect or (activeLink.rects and activeLink.rects[1])
                         if primary and primary.isFormInput and primary.inputBlock then
-                            local block = primary.inputBlock
-                            if block.type == "input_field" then
-                                openKeyboardForInput(block)
-                            elseif block.type == "input_submit" then
-                                submitForm(block.formAction, block)
-                            end
-                        elseif activeLink.href then
+                            activateFormBlock(primary.inputBlock)
+                        elseif activeLink.href and not (primary and primary.inert) then
                             navigateTo(activeLink.href)
                         end
                     end
@@ -562,13 +608,8 @@ local function updateFrame()
                 if hitLink then
                     local primary = hitLink.primaryRect or (hitLink.rects and hitLink.rects[1])
                     if primary and primary.isFormInput and primary.inputBlock then
-                        local block = primary.inputBlock
-                        if block.type == "input_field" then
-                            openKeyboardForInput(block)
-                        elseif block.type == "input_submit" then
-                            submitForm(block.formAction, block)
-                        end
-                    elseif hitLink.href then
+                        activateFormBlock(primary.inputBlock)
+                    elseif hitLink.href and not (primary and primary.inert) then
                         navigateTo(hitLink.href)
                     end
                 end

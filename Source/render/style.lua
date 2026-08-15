@@ -72,3 +72,16 @@ function Style.getBodyFont(isBold, isCode)
         return Style.fontBody, 16
     end
 end
+
+-- Choose a font + line height for an inline run based on its formatting flags.
+function Style.getInlineFont(isBold, isCode, isSmall, isSub, isSup, isBig)
+    if isCode then
+        return Style.fontMono, 15
+    elseif isSmall or isSub or isSup then
+        return Style.fontSmall, 14
+    elseif isBold or isBig then
+        return Style.fontBodyBold, 16
+    else
+        return Style.fontBody, 16
+    end
+end

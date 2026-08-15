@@ -7,6 +7,7 @@ local DATA_FILENAME = "comet_browser_data"
 
 Storage.bookmarks = {}
 Storage.history = {}
+Storage.cookies = {}
 Storage.settings = {
     searchEngine = 1,
     mode = Constants.MODE_RAW_HTML,
@@ -28,6 +29,9 @@ function Storage.init()
         if saved.history then
             Storage.history = saved.history
         end
+        if saved.cookies then
+            Storage.cookies = saved.cookies
+        end
         if saved.settings then
             for k, v in pairs(saved.settings) do
                 Storage.settings[k] = v
@@ -47,6 +51,7 @@ function Storage.save()
     local data = {
         bookmarks = Storage.bookmarks,
         history = Storage.history,
+        cookies = Storage.cookies,
         settings = Storage.settings
     }
     playdate.datastore.write(data, DATA_FILENAME, true)

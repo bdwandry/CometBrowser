@@ -51,6 +51,40 @@ local function orderedMarker(number, markerType)
     else return tostring(number or 1) end
 end
 
+-- HTML treats a tab as "advance to the next tab stop" (default 8 columns) in
+-- preformatted text; in ordinary prose a tab is collapsed whitespace. This
+-- helper reports the pixel width needed to reach the next tab stop from a
+-- given running line width (used only for whitespace runs that contain a tab).
+local TAB_COLUMNS = 8
+local function tabAdvance(font, runningWidth)
+    local spaceW = Style.getTextWidth(font or Style.fontBody or gfx.getFont(), " ")
+    if spaceW <= 0 then spaceW = 8 end
+    local tabPx = TAB_COLUMNS * spaceW
+    local toTab = tabPx - (runningWidth % tabPx)
+    if toTab <= 0 then toTab = tabPx end
+    return toTab
+end
+
+-- Column-accurate tab expansion for monospaced pre/code lines: a tab advances
+-- to the next multiple of 8 character columns.
+local function expandTabColumns(line)
+    if not string.find(line or "", "\t", 1, true) then return line end
+    local out = {}
+    local col = 0
+    for i = 1, #line do
+        local c = string.sub(line, i, i)
+        if c == "\t" then
+            local pad = TAB_COLUMNS - (col % TAB_COLUMNS)
+            out[#out + 1] = string.rep(" ", pad)
+            col = col + pad
+        else
+            out[#out + 1] = c
+            col = col + 1
+        end
+    end
+    return table.concat(out)
+end
+
 -- Break a list of inline runs into wrapped lines. A line is a list of words
 -- with their fonts; the word width excludes the trailing space, "advance"
 -- includes it.
@@ -85,15 +119,49 @@ local function breakLines(inlines, maxW, opts)
             end
             lineH = math.max(lineH, lh)
             local text = inline.text or ""
-            for word in string.gmatch(text, "%S+") do
+            local spaceW = Style.getTextWidth(font, " ")
+            if spaceW <= 0 then spaceW = 8 end
+            local pos = 1
+            local n = #text
+            local function isSpace(c) return c ~= "" and string.find(c, "%s") ~= nil end
+            while pos <= n do
+                -- Drop leading whitespace (HTML collapses whitespace runs).
+                while pos <= n and isSpace(string.sub(text, pos, pos)) do
+                    pos = pos + 1
+                end
+                if pos > n then break end
+
+                local word = string.match(text, "^%S+", pos)
                 local ww = Style.getTextWidth(font, word)
-                local aw = ww + Style.getTextWidth(font, " ")
+
+                -- Measure the whitespace run following this word. Runs of
+                -- ordinary whitespace collapse to a single space; runs that
+                -- contain a tab advance to the next tab stop.
+                local gap = 0
+                local wsEnd = pos + #word
+                local wsStart = wsEnd
+                while wsEnd <= n and isSpace(string.sub(text, wsEnd, wsEnd)) do
+                    wsEnd = wsEnd + 1
+                end
+                if wsEnd > wsStart then
+                    local ws = string.sub(text, wsStart, wsEnd - 1)
+                    if string.find(ws, "\t", 1, true) then
+                        gap = tabAdvance(font, cur.width + ww)
+                    else
+                        gap = spaceW
+                    end
+                end
+
+                local aw = ww + gap
                 if cur.width + aw > maxW and not firstWord then
                     push()
+                    aw = ww
+                    gap = 0
                 end
                 table.insert(cur.words, { text = word, font = font, w = ww, advance = aw, inline = inline })
                 cur.width = cur.width + aw
                 firstWord = false
+                pos = wsEnd
             end
         end
     end
@@ -115,6 +183,19 @@ local function emitFlow(lines, lineH, startX, maxW, align, startY)
             x = startX + math.floor((maxW - textW) / 2)
         elseif align == "right" then
             x = startX + math.max(0, maxW - textW)
+        end
+        local mrX, mrW, mrHref, mrAnchor, mrText, mrInert = nil, 0, nil, nil, "", false
+        local function flushLinkRect()
+            if mrHref and mrX then
+                LinkManager.addLinkRect(mrHref, mrText, {
+                    x = mrX,
+                    y = y,
+                    w = mrW,
+                    h = lineH,
+                    inert = mrInert
+                }, mrAnchor)
+            end
+            mrX, mrW, mrHref, mrAnchor, mrText, mrInert = nil, 0, nil, nil, "", false
         end
         for _, wd in ipairs(line.words) do
             local inline = wd.inline
@@ -140,17 +221,26 @@ local function emitFlow(lines, lineH, startX, maxW, align, startY)
                 anchorIndex = inline.anchorIndex
             }
             items[#items + 1] = item
-            if inline.href then
-                LinkManager.addLinkRect(inline.href, inline.text, {
-                    x = x,
-                    y = y,
-                    w = wd.w,
-                    h = lineH,
-                    inert = inline.inert or false
-                }, inline.anchorIndex)
+            if inline.href and mrHref == inline.href and mrAnchor == inline.anchorIndex and mrX then
+                -- Same link continues: extend the rect to cover the gap (the
+                -- space between this word and the previous one) too, so the
+                -- ENTIRE hyperlinked text is hoverable/selectable.
+                mrW = (x + wd.w) - mrX
+                mrText = mrText .. " " .. wd.text
+            elseif inline.href then
+                flushLinkRect()
+                mrX = x
+                mrW = wd.w
+                mrHref = inline.href
+                mrAnchor = inline.anchorIndex
+                mrText = wd.text
+                mrInert = inline.inert or false
+            else
+                flushLinkRect()
             end
             x = x + wd.advance
         end
+        flushLinkRect()
         y = y + lineH
     end
     return items, y
@@ -682,7 +772,7 @@ function Layout.draw(scrollY)
                 local lineY = drawY + 6
                 for _, l in ipairs(item.lines or {}) do
                     if lineY + 14 <= drawY + item.h then
-                        gfx.drawText(l, item.x + 8, lineY)
+                        gfx.drawText(expandTabColumns(l), item.x + 8, lineY)
                     end
                     lineY = lineY + 14
                 end

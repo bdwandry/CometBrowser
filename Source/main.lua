@@ -6,6 +6,7 @@ import "core/constants"
 import "core/url"
 import "core/storage"
 import "core/http_client"
+import "core/cookie_jar"
 import "core/logger"
 import "html/document"
 import "render/style"
@@ -192,19 +193,15 @@ updateSystemMenu = function()
     local menu = playdate.getSystemMenu()
     menu:removeAllMenuItems()
 
-    menu:addMenuItem("Home", function()
+    menu:addMenuItem("Home-Page", function()
         pendingNavUrl = "about:home"
     end)
 
     if currentState == Constants.STATE_PAGE and currentUrlObj and currentUrlObj.scheme ~= "about" then
-        menu:addMenuItem("Bookmark", function()
-            Storage.addBookmark(pageTitle, currentUrlObj.normalized, "")
-        end)
-
         local initialVal = "Reader"
         if currentBrowseMode == Constants.MODE_RAW_HTML then initialVal = "HTML" end
 
-        menu:addOptionsMenuItem("Mode", { "Reader", "HTML" }, initialVal, function(value)
+        menu:addOptionsMenuItem("View", { "Reader", "HTML" }, initialVal, function(value)
             if value == "Reader" then currentBrowseMode = Constants.MODE_READER
             elseif value == "HTML" then currentBrowseMode = Constants.MODE_RAW_HTML end
 
@@ -225,6 +222,10 @@ updateSystemMenu = function()
     menu:addMenuItem("History", function()
         HistoryPage.open()
         currentState = Constants.STATE_HISTORY
+    end)
+
+    menu:addMenuItem("Clear Cookies", function()
+        CookieJar.clear()
     end)
 end
 
@@ -390,6 +391,7 @@ end
 
 -- ── Top-Level App Init ────────────────────────────────────────────────────────
 Storage.init()
+CookieJar.prune()
 Logger.init()
 Style.init()
 HomePage.reset()

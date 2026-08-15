@@ -6,6 +6,7 @@
 import "core/url"
 import "core/constants"
 import "core/logger"
+import "core/cookie_jar"
 
 HttpClient = {}
 
@@ -164,6 +165,10 @@ local function buildRequest(parsed)
     req = req .. "User-Agent: CometBrowser/1.0 (Playdate)\r\n"
     req = req .. "Accept: text/html,text/plain;q=0.8\r\n"
     req = req .. "Accept-Language: en-US,en;q=0.9\r\n"
+    local cookieStr = CookieJar.getHeader(parsed.host, parsed.path, parsed.isSsl)
+    if cookieStr ~= "" then
+        req = req .. "Cookie: " .. cookieStr .. "\r\n"
+    end
     req = req .. "Connection: close\r\n"
     req = req .. "\r\n"
     return req
@@ -205,11 +210,23 @@ local function parseHeaders()
     if st then requestStatus = st end
 
     local headers = {}
+    local setCookies = {}
     for line in string.gmatch(headPart .. "\n", "([^\n]+)\n") do
         local k, v = string.match(line, "^%s*([^:]+)%s*:%s*(.-)%s*$")
-        if k and v then headers[string.lower(k)] = v end
+        if k and v then
+            local lk = string.lower(k)
+            if lk == "set-cookie" then
+                table.insert(setCookies, v)
+            else
+                headers[lk] = v
+            end
+        end
     end
     requestHeaders = headers
+
+    if activeParsed and activeParsed.host and #setCookies > 0 then
+        CookieJar.processSetCookies(activeParsed.host, setCookies)
+    end
 
     local te = string.lower(headers["transfer-encoding"] or "")
     isChunked = (string.find(te, "chunked") ~= nil)

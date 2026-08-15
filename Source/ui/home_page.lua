@@ -9,9 +9,59 @@ local gfx = playdate.graphics
 HomePage.selectedIndex = 1
 HomePage.scrollY = 0
 
+-- Per-card marquee scroll state so oversized title/desc text scrolls within
+-- its card box instead of overflowing outside it.
+local marqueeState = {}
+
+local function nowMs()
+    if playdate.getCurrentTimeMilliseconds then
+        return playdate.getCurrentTimeMilliseconds()
+    end
+    return 0
+end
+
+-- Draw text inside a maxW-wide box, clipping it and horizontally scrolling
+-- (oscillating) when the text is wider than the box.
+local function drawMarquee(text, x, y, maxW, font, key)
+    gfx.setFont(font)
+    local tw = Style.getTextWidth(font, text)
+    if tw <= maxW then
+        gfx.drawText(text, x, y)
+        return
+    end
+
+    local range = tw - maxW
+    local st = marqueeState[key]
+    if not st then
+        st = { startMs = nowMs() }
+        marqueeState[key] = st
+    end
+    local elapsed = math.max(0, (nowMs() - st.startMs) / 1000)
+    local speed = 50
+    local dwell = 1.0
+    local travel = range / speed
+    local cycle = 2 * (dwell + travel)
+    local t = elapsed % cycle
+    local offset
+    if t < dwell then
+        offset = 0
+    elseif t < dwell + travel then
+        offset = (t - dwell) * speed
+    elseif t < dwell + travel + dwell then
+        offset = range
+    else
+        offset = range - (t - dwell - travel - dwell) * speed
+    end
+
+    gfx.setClipRect(x, y, maxW, 15)
+    gfx.drawText(text, x - math.floor(offset), y)
+    gfx.clearClipRect()
+end
+
 function HomePage.reset()
     HomePage.selectedIndex = 1
     HomePage.scrollY = 0
+    marqueeState = {}
 end
 
 function HomePage.handleInput()
@@ -151,15 +201,13 @@ function HomePage.draw(crankChange)
             gfx.setImageDrawMode(gfx.kDrawModeCopy)
         end
 
+        local textAreaW = cardW - 16
+
         gfx.setFont(fontBold)
-        local title = bm.title or bm.url
-        if #title > 20 then title = string.sub(title, 1, 18) .. "..." end
-        gfx.drawText(title, cardX + 8, cardY + 6)
+        drawMarquee(bm.title or bm.url, cardX + 8, cardY + 6, textAreaW, fontBold, "t" .. i)
 
         gfx.setFont(fontSmall)
-        local desc = bm.desc or bm.url
-        if #desc > 26 then desc = string.sub(desc, 1, 24) .. "..." end
-        gfx.drawText(desc, cardX + 8, cardY + 24)
+        drawMarquee(bm.desc or bm.url, cardX + 8, cardY + 24, textAreaW, fontSmall, "d" .. i)
 
         gfx.setImageDrawMode(gfx.kDrawModeCopy)
     end

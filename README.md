@@ -2,7 +2,7 @@
 
 **CometBrowser** is a fast, standalone, general-purpose web browser built specifically for the **Playdate handheld console** and **Playdate Simulator**. 
 
-Unlike single-purpose feed readers, CometBrowser allows you to navigate to any web address (e.g. `bryanwandrych.com`, `google.com`, `wikipedia.org`, `news.ycombinator.com`, etc.), search the internet, click hyperlinks, render HTML headings, paragraphs, lists, blockquotes, code blocks, tables, and images with 1-bit monochrome graphics on the 400x240 sharp LCD screen.
+Unlike single-purpose feed readers, CometBrowser allows you to navigate to any web address (e.g. `wikipedia.org`, `news.ycombinator.com`, etc.), search the internet, click hyperlinks, render HTML headings, paragraphs, lists, blockquotes, code blocks, tables, and images with 1-bit monochrome graphics on the 400x240 sharp LCD screen.
 
 ---
 
@@ -112,5 +112,3 @@ CometBrowser/
     ├── fonts/                # High-legibility Playdate typography
     └── assets/               # Launcher cards & icons
 ```
-
-Created by **Bryan Wandrych** for the Playdate community.

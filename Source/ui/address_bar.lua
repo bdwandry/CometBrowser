@@ -85,7 +85,7 @@ function AddressBar.drawOverlay()
     gfx.setFont(font)
     gfx.drawText("Enter Web URL or Search Query:", 20, 12)
 
-    local txt = AddressBar.inputText ~= "" and AddressBar.inputText or "https://"
+    local txt = AddressBar.inputText or ""
     if #txt > 40 then
         txt = "..." .. string.sub(txt, -37)
     end

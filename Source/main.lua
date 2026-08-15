@@ -366,7 +366,15 @@ local function updateFrame()
     end
 
     local crankChange = playdate.getCrankChange()
-    if crankChange ~= 0 then
+
+    -- While any keyboard is up (address bar or a page's form input), the crank
+    -- belongs to the keyboard's own cursor, so the page behind it must not
+    -- scroll, and no velocity may be left over to release when it closes.
+    local keyboardActive = keyboardOpen or AddressBar.isOpen
+    if keyboardActive then
+        crankChange = 0
+        crankVelocity = 0
+    elseif crankChange ~= 0 then
         crankVelocity = crankVelocity + crankChange * 1.6
     end
     crankVelocity = crankVelocity * 0.85

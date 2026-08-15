@@ -10,14 +10,74 @@ Unlike single-purpose feed readers, CometBrowser allows you to navigate to any w
 
 ## 🎮 Hardware Controls & Shortcuts
 
+### Global
+
 | Control | Action |
 | :--- | :--- |
-| **Physical Crank** | Smooth continuous vertical scrolling with kinetic inertia and acceleration. |
-| **Ⓑ Button** | Open Address Bar & Web Search using the on-screen keyboard. |
-| **Ⓐ Button** | Follow active focused hyperlink / Submit search / Select bookmark. |
-| **D-Pad Up / Down** | Step scroll or cycle focus to previous / next link on the page. |
-| **D-Pad Left / Right** | Jump half-page up / down or cycle horizontal links. |
-| **Playdate System Menu** | Access **Home**, **Add Bookmark**, **Bookmarks Manager**, **History**, **Reader Mode**, and **Reload**. |
+| **Physical Crank** | Scroll pages & list screens with kinetic inertia; moves the mouse cursor in HTML mode. |
+| **Ⓐ Button** | Confirm / follow the focused link / activate a form input / open the selected item. |
+| **Ⓑ Button** | Open the Address Bar (URL pre-filled when on a page); **release** to launch the on-screen keyboard. |
+| **Ⓑ + Left** | **Back** in page history (press Left while the address-bar keyboard is armed). |
+| **Ⓑ + Right** | **Forward** in page history (press Right while the address-bar keyboard is armed). |
+| **Ⓐ + Left** | **Back** in page history (while on a page). |
+| **Ⓐ + Right** | **Forward** in page history (while on a page). |
+
+### Reader Mode (web page)
+
+| Control | Action |
+| :--- | :--- |
+| **D-Pad Down** | Jump to the next link on the page (scroll down if none nearby). |
+| **D-Pad Up** | Jump to the previous link on the page (scroll up if none nearby). |
+| **Ⓐ** | Follow the focused link / activate a form input. |
+| **Ⓑ** | Open the Address Bar pre-filled with the current URL. |
+| **Crank** | Scroll with inertia. |
+
+### HTML Mode (virtual mouse cursor)
+
+| Control | Action |
+| :--- | :--- |
+| **D-Pad (hold)** | Move the mouse cursor in that direction. |
+| **Crank** | Move the cursor up / down. |
+| **Cursor near screen edge** | Auto-scroll the page. |
+| **Ⓐ** | Left-click the hovered link / activate a form input. |
+| **Ⓑ** | Open the Address Bar. |
+
+### Home Page (Speed Dial)
+
+| Control | Action |
+| :--- | :--- |
+| **D-Pad Up / Down** | Move between grid rows. |
+| **D-Pad Left / Right** | Move between grid columns. |
+| **Ⓐ** | Open the selected bookmark. |
+| **Ⓑ** | Open the Address Bar & search. |
+| **Crank** | Scroll the grid. |
+
+### Loading Screen
+
+| Control | Action |
+| :--- | :--- |
+| **Ⓑ** | Cancel the page load. |
+| **Left** | Cancel the load and go **Back** in history. |
+
+### Error Page
+
+| Control | Action |
+| :--- | :--- |
+| **Left / Up** and **Right / Down** | Cycle through **Retry / Search / Home**. |
+| **Ⓐ** | Confirm the highlighted option. |
+| **Left** | Go **Back** in history. |
+
+### Bookmarks & History Pages
+
+| Control | Action |
+| :--- | :--- |
+| **D-Pad Up / Down** | Navigate the list. |
+| **Ⓐ** | Open the selected entry. |
+| **Ⓑ** | Close and return to the Home Page. |
+
+### Playdate System Menu
+
+Access **Home-Page**, **Display Mode** (toggle **Reader / HTML**), **Bookmarks**, **History**, and **Clear Cookies**.
 
 ---
 

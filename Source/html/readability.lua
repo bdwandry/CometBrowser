@@ -24,6 +24,18 @@ local function wordCount(str)
     return count
 end
 
+-- True when the text is just a bare URL/domain (e.g. "en.wikipedia.org/wiki/Mesklin").
+-- Such anchors only duplicate the target address, so reader mode hides them,
+-- leaving the meaningful anchor text visible (Safari-style reading).
+local function isBareUrlText(text)
+    if not text then return false end
+    local t = trimStr(text)
+    if t == "" or string.find(t, "%s") then return false end
+    if string.match(t, "^https?://[^%s]+$") then return true end
+    if string.match(t, "^[a-zA-Z0-9][a-zA-Z0-9%-%.]*%.[a-zA-Z][a-zA-Z0-9%-]*([/%?][^%s]*)?$") then return true end
+    return false
+end
+
 -- Merge consecutive tiny paragraph fragments (e.g. text split across many
 -- <div> wrappers like "Welcome to Wikipedia" / "," / "the free encyclopedia")
 -- back into one flowing paragraph, so they don't each render on their own line.
@@ -161,6 +173,9 @@ function Readability.distill(tokens, rawTitle, baseUrl)
             text = string.gsub(text, "[\r\n\t]+", " ")
         end
         if text == "" or text == " " then return end
+
+        -- Skip anchors whose visible text is just the URL itself
+        if currentHref and isBareUrlText(text) then return end
 
         ensureBlock()
         local inline = {

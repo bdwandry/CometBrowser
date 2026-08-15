@@ -6,6 +6,7 @@ import "core/constants"
 import "core/url"
 import "core/storage"
 import "core/http_client"
+import "core/logger"
 import "html/document"
 import "render/style"
 import "render/layout"
@@ -58,6 +59,7 @@ local mouseSpeed         = 4
 -- Form input state
 local activeInputField   = nil
 local keyboardOpen       = false
+local addressBarKeyboardArmed = false
 
 -- ── Helpers ───────────────────────────────────────────────────────────────────
 local function pushHistory(urlString)
@@ -176,8 +178,12 @@ updateSystemMenu = function()
 end
 
 -- ── Navigation ────────────────────────────────────────────────────────────────
-executeNavigation = function(urlString)
+local runNavigation
+
+runNavigation = function(urlString)
     if not urlString or urlString == "" then return end
+    Logger.log("runNavigation: " .. tostring(urlString))
+    urlString = URL.unwrapRedirect(urlString)
     urlString = string.gsub(urlString, "^%s*(.-)%s*$", "%1")
 
     activeInputField = nil
@@ -220,74 +226,88 @@ executeNavigation = function(urlString)
         end,
         onSuccess = function(status, headers, body, finalUrl)
             print("ZQFETCH OK status=" .. tostring(status) .. " bytes=" .. #(body or ""))
-            local resolvedUrl = finalUrl or parsed.normalized
-            currentUrlObj = URL.parse(resolvedUrl)
+            Logger.log("fetch OK status=" .. tostring(status) .. " bytes=" .. #(body or "") .. " url=" .. tostring(finalUrl))
+            local cbOk, cbErr = pcall(function()
+                local resolvedUrl = finalUrl or parsed.normalized
+                currentUrlObj = URL.parse(resolvedUrl)
 
-            local parseOk, doc = pcall(function()
-                return Document.parse(body, resolvedUrl, currentBrowseMode)
-            end)
-
-            -- Force garbage collection immediately after parsing the heavy HTML string
-            body = nil
-            collectgarbage("collect")
-
-            if parseOk and doc then
-                print("ZQPARSE ok reader=" .. tostring(doc.isReaderMode) .. " blocks=" .. tostring(#(doc.blocks or {})))
-                currentDoc = doc
-                pageTitle  = doc.title or currentUrlObj.host or "Web Page"
-
-                local layoutOk, lErr = pcall(function()
-                    Layout.build(currentDoc)
+                local parseOk, doc = pcall(function()
+                    return Document.parse(body, resolvedUrl, currentBrowseMode)
                 end)
 
-                -- Force garbage collection again after laying out UI blocks
+                -- Force garbage collection immediately after parsing the heavy HTML string
+                body = nil
                 collectgarbage("collect")
 
-                if layoutOk then
-                    print("ZQITEMS " .. tostring(#(Layout.renderItems or {})))
-                    print("=== ZQBLOCKS start ===")
-                    for i, blk in ipairs(currentDoc.blocks or {}) do
-                        local txt = ""
-                        if blk.inlines then
-                            for _, inl in ipairs(blk.inlines) do txt = txt .. (inl.text or "") end
-                        elseif blk.text then txt = blk.text end
-                        if #txt > 90 then txt = string.sub(txt, 1, 90) .. "..." end
-                        print(i .. "[" .. (blk.type or "?") .. "]" .. (blk.level and (" h"..blk.level) or "") .. " |" .. txt .. "|")
-                    end
-                    print("=== ZQBLOCKS end ===")
-                    scrollY = 0
-                    targetScrollY = 0
-                    crankVelocity = 0
-                    currentState = Constants.STATE_PAGE
-                    Storage.addHistory(pageTitle, resolvedUrl)
-                    updateSystemMenu()
+                if parseOk and doc then
+                    print("ZQPARSE ok reader=" .. tostring(doc.isReaderMode) .. " blocks=" .. tostring(#(doc.blocks or {})))
+                    Logger.log("parse ok reader=" .. tostring(doc.isReaderMode) .. " blocks=" .. tostring(#(doc.blocks or {})))
+                    currentDoc = doc
+                    pageTitle  = doc.title or currentUrlObj.host or "Web Page"
 
-                    -- Enqueue all images for background download
-                    for _, blk in ipairs(currentDoc.blocks or {}) do
-                        if blk.type == "image" and blk.src and blk.src ~= "" then
-                            ImageDecoder.enqueue(blk.src)
+                    local layoutOk, lErr = pcall(function()
+                        Layout.build(currentDoc)
+                    end)
+
+                    -- Force garbage collection again after laying out UI blocks
+                    collectgarbage("collect")
+
+                    if layoutOk then
+                        print("ZQITEMS " .. tostring(#(Layout.renderItems or {})))
+                        Logger.log("layout ok items=" .. tostring(#(Layout.renderItems or {})))
+                        print("=== ZQBLOCKS start ===")
+                        for i, blk in ipairs(currentDoc.blocks or {}) do
+                            local txt = ""
+                            if blk.inlines then
+                                for _, inl in ipairs(blk.inlines) do txt = txt .. (inl.text or "") end
+                            elseif blk.text then txt = blk.text end
+                            if #txt > 90 then txt = string.sub(txt, 1, 90) .. "..." end
+                            print(i .. "[" .. (blk.type or "?") .. "]" .. (blk.level and (" h"..blk.level) or "") .. " |" .. txt .. "|")
                         end
-                    end
+                        print("=== ZQBLOCKS end ===")
+                        scrollY = 0
+                        targetScrollY = 0
+                        crankVelocity = 0
+                        currentState = Constants.STATE_PAGE
+                        Storage.addHistory(pageTitle, resolvedUrl)
+                        updateSystemMenu()
 
-                    return
+                        -- Enqueue all images for background download
+                        for _, blk in ipairs(currentDoc.blocks or {}) do
+                            if blk.type == "image" and blk.src and blk.src ~= "" then
+                                ImageDecoder.enqueue(blk.src)
+                            end
+                        end
+
+                        return
+                    else
+                        print("ZQLAYOUT-ERR " .. tostring(lErr))
+                        ErrorPage.show("Layout Error: " .. tostring(lErr), parsed.normalized)
+                        currentState = Constants.STATE_ERROR
+                        pageTitle    = "Render Error"
+                        updateSystemMenu()
+                        return
+                    end
                 else
-                    print("ZQLAYOUT-ERR " .. tostring(lErr))
-                    ErrorPage.show("Layout Error: " .. tostring(lErr), parsed.normalized)
+                    ErrorPage.show("Parse Error: " .. tostring(doc), parsed.normalized)
                     currentState = Constants.STATE_ERROR
                     pageTitle    = "Render Error"
                     updateSystemMenu()
                     return
                 end
-            else
-                ErrorPage.show("Parse Error: " .. tostring(doc), parsed.normalized)
+            end)
+            if not cbOk then
+                print("ZQNAV-CB-ERR: " .. tostring(cbErr))
+                Logger.error("navigation callback: " .. tostring(cbErr))
+                ErrorPage.show("Render Error: " .. tostring(cbErr), parsed.normalized)
                 currentState = Constants.STATE_ERROR
                 pageTitle    = "Render Error"
                 updateSystemMenu()
-                return
             end
         end,
         onError = function(err)
             print("ZQFETCH ERROR: " .. tostring(err))
+            Logger.log("fetch ERROR: " .. tostring(err))
             ErrorPage.show(err, parsed.normalized)
             currentState = Constants.STATE_ERROR
             pageTitle    = "Connection Error"
@@ -296,12 +316,30 @@ executeNavigation = function(urlString)
     })
 end
 
+-- Wrap navigation so an unexpected Lua error shows an Error page instead of
+-- crashing the app (and so the message is visible in the console for diagnosis).
+executeNavigation = function(urlString)
+    if not urlString or urlString == "" then return end
+    local ok, err = pcall(function()
+        runNavigation(urlString)
+    end)
+    if not ok then
+        print("ZQNAV-ERR: " .. tostring(err))
+        Logger.error("executeNavigation: " .. tostring(err))
+        ErrorPage.show("Navigation Error: " .. tostring(err), urlString)
+        currentState = Constants.STATE_ERROR
+        pageTitle    = "Navigation Error"
+        updateSystemMenu()
+    end
+end
+
 navigateTo = function(urlString)
     pendingNavUrl = urlString
 end
 
 -- ── Top-Level App Init ────────────────────────────────────────────────────────
 Storage.init()
+Logger.init()
 Style.init()
 HomePage.reset()
 currentBrowseMode = Storage.settings.mode or Constants.MODE_READER
@@ -309,7 +347,11 @@ updateSystemMenu()
 pendingNavUrl = "about:home"
 
 -- ── Main Update Loop ──────────────────────────────────────────────────────────
-function playdate.update()
+-- The whole frame runs inside a pcall: if any Lua error slips through, it is
+-- written to the crash log and the frame is skipped instead of killing the app.
+local lastFrameErrAt = 0
+
+local function updateFrame()
     gfx.clear()
 
     -- Live-sync on-screen keyboard text into the focused input field
@@ -330,9 +372,36 @@ function playdate.update()
     crankVelocity = crankVelocity * 0.85
     if math.abs(crankVelocity) < 0.05 then crankVelocity = 0 end
 
+    -- Manual crank scrolling moves the view, so drop the old link selection;
+    -- the next D-pad press re-picks the closest selectable object in view.
+    -- Only react to real crank input (not the decaying velocity tail), or the
+    -- selection would be wiped right after it is made.
+    if crankChange ~= 0 then
+        LinkManager.clearSelection()
+    end
+
     HttpClient.update()
     ImageDecoder.update()
     playdate.timer.updateTimers()
+
+    -- Deferred address-bar keyboard: opens the on-screen keyboard on B release,
+    -- but if Left/Right is pressed instead, cancel it and navigate back/forward.
+    if addressBarKeyboardArmed and AddressBar.isOpen then
+        if playdate.buttonJustReleased(playdate.kButtonB) then
+            addressBarKeyboardArmed = false
+            AddressBar.launchKeyboard()
+        elseif playdate.buttonJustPressed(playdate.kButtonLeft) or playdate.buttonJustPressed(playdate.kButtonRight) then
+            addressBarKeyboardArmed = false
+            AddressBar.cancel()
+            if playdate.buttonJustPressed(playdate.kButtonLeft) then
+                local prev = goBack()
+                if prev then navigateTo(prev) end
+            else
+                local fwd = goForward()
+                if fwd then navigateTo(fwd) end
+            end
+        end
+    end
 
     -- ── HOME STATE ────────────────────────────────────────────────────────────
     if currentState == Constants.STATE_HOME then
@@ -344,6 +413,7 @@ function playdate.update()
 
         if playdate.buttonJustPressed(playdate.kButtonB) and not AddressBar.isOpen then
             AddressBar.open("", function(newUrl) navigateTo(newUrl) end)
+            addressBarKeyboardArmed = true
         end
 
     -- ── PAGE STATE ────────────────────────────────────────────────────────────
@@ -416,6 +486,7 @@ function playdate.update()
                 if playdate.buttonJustPressed(playdate.kButtonB) and not AddressBar.isOpen then
                     local curUrlStr = currentUrlObj and currentUrlObj.normalized or ""
                     AddressBar.open(curUrlStr, function(newUrl) navigateTo(newUrl) end)
+                    addressBarKeyboardArmed = true
                 end
 
             -- ── HTML MODE: Virtual Mouse Cursor ──────────────────────────────
@@ -486,6 +557,7 @@ function playdate.update()
                     if playdate.buttonJustPressed(playdate.kButtonB) and not AddressBar.isOpen then
                         local curUrlStr = currentUrlObj and currentUrlObj.normalized or ""
                         AddressBar.open(curUrlStr, function(newUrl) navigateTo(newUrl) end)
+                        addressBarKeyboardArmed = true
                     end
                 end
             end
@@ -566,6 +638,7 @@ function playdate.update()
                 if currentUrlObj then navigateTo(currentUrlObj.normalized) end
             elseif action == "search" then
                 AddressBar.open("", function(newUrl) navigateTo(newUrl) end)
+                AddressBar.launchKeyboard()
             elseif action == "home" then
                 navigateTo("about:home")
             end
@@ -596,4 +669,15 @@ function playdate.update()
     local isReader = (currentBrowseMode == Constants.MODE_READER)
     Chrome.draw(currentUrlObj, pageTitle, currentState == Constants.STATE_LOADING, progressCurrent, progressTotal, isReader)
     AddressBar.drawOverlay()
+end
+
+function playdate.update()
+    local ok, err = pcall(updateFrame)
+    if not ok then
+        local now = playdate.getCurrentTimeMilliseconds()
+        if now - lastFrameErrAt > 1000 then
+            lastFrameErrAt = now
+            Logger.error("playdate.update: " .. tostring(err))
+        end
+    end
 end

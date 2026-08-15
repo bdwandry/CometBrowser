@@ -104,7 +104,13 @@ local function processNextImage()
 end
 
 function ImageDecoder.update()
-    -- Called every frame from main.lua to pump the image download queue
+    -- Called every frame from main.lua to pump the image download queue.
+    -- If we think we're downloading but the HTTP client is idle, the download
+    -- was cancelled (e.g. by a navigation) and its callbacks will never fire,
+    -- so release the "busy" flag or the queue would stall forever.
+    if isDownloading and not HttpClient.isLoading() then
+        isDownloading = false
+    end
     if not isDownloading and #downloadQueue > 0 and not HttpClient.isLoading() then
         processNextImage()
     end

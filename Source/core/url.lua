@@ -166,6 +166,19 @@ function URL.parse(urlString)
     }
 end
 
+-- Unwrap redirect-service URLs (e.g. DuckDuckGo's /l/?uddg=...) to the real target.
+-- DDG's redirect endpoint rejects our minimal HTTP client, so hop it entirely.
+function URL.unwrapRedirect(urlString)
+    if not urlString or urlString == "" then return urlString end
+    if string.match(urlString, "duckduckgo%.com/l/") then
+        local u = string.match(urlString, "[?&]uddg=([^&]+)")
+        if u and u ~= "" then
+            return URL.decode(u)
+        end
+    end
+    return urlString
+end
+
 -- Resolve a relative URL against a base URL
 function URL.resolve(baseUrlStr, relativeUrlStr)
     if not relativeUrlStr or relativeUrlStr == "" then

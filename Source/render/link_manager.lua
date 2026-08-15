@@ -12,6 +12,10 @@ function LinkManager.clear()
     LinkManager.selectedIndex = nil
 end
 
+function LinkManager.clearSelection()
+    LinkManager.selectedIndex = nil
+end
+
 function LinkManager.addLinkRect(href, text, rect)
     if not href or href == "" or not rect then return end
 
@@ -34,6 +38,41 @@ function LinkManager.getCount()
     return #LinkManager.links
 end
 
+-- Pick the closest selectable object that is currently visible in the
+-- viewport. If nothing is in view, fall back to the closest link on the
+-- page (the caller then scrolls it into view). Used for the first D-pad
+-- press after scrolling so selection starts where the reader is looking.
+local function findInitialSelection(currentScrollY)
+    local viewTop = currentScrollY
+    local viewBottom = currentScrollY + Constants.CONTENT_HEIGHT
+    local viewCenter = viewTop + Constants.CONTENT_HEIGHT / 2
+
+    -- Pass 1: links whose center is inside the viewport
+    local bestIndex, bestDist = nil, math.huge
+    for i, l in ipairs(LinkManager.links) do
+        local cy = l.primaryRect.y + (l.primaryRect.h or 0) / 2
+        if cy >= viewTop and cy <= viewBottom then
+            local d = math.abs(cy - viewCenter)
+            if d < bestDist then
+                bestDist = d
+                bestIndex = i
+            end
+        end
+    end
+    if bestIndex then return bestIndex end
+
+    -- Pass 2: nothing in view, pick the closest link anywhere on the page
+    for i, l in ipairs(LinkManager.links) do
+        local cy = l.primaryRect.y + (l.primaryRect.h or 0) / 2
+        local d = math.abs(cy - viewCenter)
+        if d < bestDist then
+            bestDist = d
+            bestIndex = i
+        end
+    end
+    return bestIndex
+end
+
 function LinkManager.getSelectedLink()
     if LinkManager.selectedIndex and LinkManager.selectedIndex >= 1 and LinkManager.selectedIndex <= #LinkManager.links then
         return LinkManager.links[LinkManager.selectedIndex]
@@ -48,14 +87,13 @@ function LinkManager.selectNext(currentScrollY)
     end
 
     if not LinkManager.selectedIndex then
-        currentScrollY = currentScrollY or 0
-        for i, l in ipairs(LinkManager.links) do
-            if l.primaryRect.y >= currentScrollY then
-                LinkManager.selectedIndex = i
-                return LinkManager.links[i]
-            end
+        local idx = findInitialSelection(currentScrollY or 0)
+        if idx then
+            LinkManager.selectedIndex = idx
+            return LinkManager.links[idx]
         end
-        LinkManager.selectedIndex = 1
+        LinkManager.selectedIndex = nil
+        return nil
     else
         LinkManager.selectedIndex = LinkManager.selectedIndex + 1
         if LinkManager.selectedIndex > #LinkManager.links then
@@ -73,15 +111,13 @@ function LinkManager.selectPrev(currentScrollY)
     end
 
     if not LinkManager.selectedIndex then
-        currentScrollY = currentScrollY or 0
-        for i = #LinkManager.links, 1, -1 do
-            local l = LinkManager.links[i]
-            if l.primaryRect.y <= currentScrollY + Constants.CONTENT_HEIGHT then
-                LinkManager.selectedIndex = i
-                return LinkManager.links[i]
-            end
+        local idx = findInitialSelection(currentScrollY or 0)
+        if idx then
+            LinkManager.selectedIndex = idx
+            return LinkManager.links[idx]
         end
-        LinkManager.selectedIndex = #LinkManager.links
+        LinkManager.selectedIndex = nil
+        return nil
     else
         LinkManager.selectedIndex = LinkManager.selectedIndex - 1
         if LinkManager.selectedIndex < 1 then

@@ -10,9 +10,11 @@ local gfx = playdate.graphics
 AddressBar.isOpen = false
 AddressBar.inputText = ""
 AddressBar.onSubmitCallback = nil
+AddressBar.keyboardShown = false
 
 function AddressBar.open(currentUrl, onSubmit)
     AddressBar.isOpen = true
+    AddressBar.keyboardShown = false
     AddressBar.onSubmitCallback = onSubmit
     
     local initialText = ""
@@ -21,7 +23,14 @@ function AddressBar.open(currentUrl, onSubmit)
     end
 
     AddressBar.inputText = initialText
-    
+    -- Keyboard is NOT shown here; it launches on B release (see launchKeyboard).
+    -- This lets the user press Left/Right to navigate back/forward instead.
+end
+
+function AddressBar.launchKeyboard()
+    if not AddressBar.isOpen or AddressBar.keyboardShown then return end
+    AddressBar.keyboardShown = true
+
     playdate.keyboard.keyboardWillHideCallback = function(submitted)
         if submitted then
             local text = playdate.keyboard.text or ""
@@ -37,6 +46,7 @@ function AddressBar.open(currentUrl, onSubmit)
                 end
                 
                 AddressBar.isOpen = false
+                AddressBar.keyboardShown = false
                 if AddressBar.onSubmitCallback then
                     AddressBar.onSubmitCallback(finalUrl)
                 end
@@ -44,13 +54,22 @@ function AddressBar.open(currentUrl, onSubmit)
             end
         end
         AddressBar.isOpen = false
+        AddressBar.keyboardShown = false
     end
 
     playdate.keyboard.textChangedCallback = function()
         AddressBar.inputText = playdate.keyboard.text or ""
     end
 
-    playdate.keyboard.show(initialText)
+    playdate.keyboard.show(AddressBar.inputText)
+end
+
+function AddressBar.cancel()
+    AddressBar.isOpen = false
+    AddressBar.keyboardShown = false
+    AddressBar.onSubmitCallback = nil
+    playdate.keyboard.keyboardWillHideCallback = nil
+    playdate.keyboard.textChangedCallback = nil
 end
 
 function AddressBar.drawOverlay()

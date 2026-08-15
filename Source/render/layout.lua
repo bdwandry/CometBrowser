@@ -515,6 +515,9 @@ function Layout.draw(scrollY)
                 local font = Style.fontBody or gfx.getFont()
                 gfx.setFont(font)
                 local val = (item.value and item.value ~= "") and item.value or item.placeholder
+                if item.inputType == "password" then
+                    val = string.rep("*", #(item.value or ""))
+                end
                 if #val > 36 then val = string.sub(val, 1, 33) .. "..." end
                 gfx.drawText(val, item.x + 6, drawY + 3)
                 gfx.setImageDrawMode(gfx.kDrawModeCopy)

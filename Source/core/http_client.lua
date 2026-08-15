@@ -244,6 +244,7 @@ function HttpClient.update()
     -- Timeout watchdog
     if requestState == "connecting" or requestState == "reading" then
         if now - requestStart > REQUEST_TIMEOUT_MS then
+            print("ZQ watchdog fired state=" .. requestState .. " buf=" .. #requestBuffer)
             if #requestBuffer > 512 then
                 -- We got some data — treat as done rather than fail silently
                 requestState = "done"

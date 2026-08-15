@@ -55,7 +55,11 @@ function Tokenizer.tokenize(html)
     if not html or html == "" then return tokens, pageTitle end
 
     if #html > MAX_HTML_SIZE then
-        html = string.sub(html, 1, MAX_HTML_SIZE)
+        -- Cut at the last complete tag boundary so we never start/end mid-tag
+        local cut = MAX_HTML_SIZE
+        local lastGt = string.find(html, ">", math.max(1, cut - 128))
+        if lastGt then cut = lastGt end
+        html = string.sub(html, 1, cut)
     end
 
     local pos = 1
@@ -82,8 +86,8 @@ function Tokenizer.tokenize(html)
         -- Find closing bracket of tag (respecting quotes in attribute values)
         local tagEnd = findTagEnd(html, tagStart + 1)
         if not tagEnd then
-            local text = string.sub(html, tagStart)
-            table.insert(tokens, { type = "text", content = Entities.decode(text) })
+            -- Unterminated tag at end of buffer: drop the broken remainder instead
+            -- of leaking raw HTML source into the page content
             break
         end
 

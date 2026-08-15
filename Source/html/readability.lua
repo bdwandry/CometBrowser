@@ -7,7 +7,7 @@ Readability = {}
 local STRIP_TAGS = {
     script = true, style = true, noscript = true, svg = true,
     nav = true, footer = true, aside = true, header = true,
-    iframe = true, form = true
+    iframe = true
 }
 
 local function trimStr(s)
@@ -22,6 +22,47 @@ local function wordCount(str)
         count = count + 1
     end
     return count
+end
+
+-- Merge consecutive tiny paragraph fragments (e.g. text split across many
+-- <div> wrappers like "Welcome to Wikipedia" / "," / "the free encyclopedia")
+-- back into one flowing paragraph, so they don't each render on their own line.
+local function mergeParagraphFragments(blocks)
+    local out = {}
+    for _, blk in ipairs(blocks) do
+        local merged = false
+        if blk.type == "paragraph" then
+            local last = out[#out]
+            if last and last.type == "paragraph" then
+                local lastText = ""
+                for _, inl in ipairs(last.inlines or {}) do
+                    lastText = lastText .. (inl.text or "")
+                end
+                lastText = trimStr(lastText)
+                local curText = ""
+                for _, inl in ipairs(blk.inlines or {}) do
+                    curText = curText .. (inl.text or "")
+                end
+                curText = trimStr(curText)
+                -- Only join when the previous block does not end a sentence and
+                -- the combined text stays small (i.e. this is a continuation).
+                if not string.match(lastText, "[%.%?!%:]%s*$") and
+                   #(lastText .. curText) <= 200 and wordCount(curText) <= 40 then
+                    print("ZQMERGE OK [" .. lastText .. "] + [" .. curText .. "]")
+                    for _, inl in ipairs(blk.inlines or {}) do
+                        table.insert(last.inlines, inl)
+                    end
+                    merged = true
+                else
+                    print("ZQMERGE SKIP [" .. lastText .. "] + [" .. curText .. "]")
+                end
+            end
+        end
+        if not merged then
+            table.insert(out, blk)
+        end
+    end
+    return out
 end
 
 function Readability.distill(tokens, rawTitle, baseUrl)
@@ -57,11 +98,19 @@ function Readability.distill(tokens, rawTitle, baseUrl)
     local preBuffer = ""
     local inBlockquote = false
     local pendingBlock = nil
+    local currentFormAction = ""
+    local currentFormMethod = "get"
+    local inTextarea = false
+    local textareaName = ""
+    local textareaBuffer = ""
+    local inButton = false
+    local buttonLabel = ""
+    local buttonFormAction = ""
 
     local function flushBlock(block)
         if not block then return end
         local c = currentContainer()
-        if block.type == "hr" or block.type == "image" then
+        if block.type == "hr" or block.type == "image" or block.type == "input_field" or block.type == "input_submit" then
             table.insert(c.blocks, block)
             if block.type == "image" then
                 c.imageCount = (c.imageCount or 0) + 1
@@ -156,6 +205,10 @@ function Readability.distill(tokens, rawTitle, baseUrl)
             if stripDepth == 0 then
                 if inPre then
                     preBuffer = preBuffer .. (token.content or "")
+                elseif inTextarea then
+                    textareaBuffer = textareaBuffer .. (token.content or "")
+                elseif inButton then
+                    buttonLabel = buttonLabel .. (token.content or "")
                 else
                     addText(token.content)
                 end
@@ -267,6 +320,85 @@ function Readability.distill(tokens, rawTitle, baseUrl)
                         currentLinkText = ""
                     end
 
+                elseif tag == "form" then
+                    if not isClosing then
+                        currentFormAction = URL.resolve(baseUrl, token.attrs and token.attrs["action"] or "")
+                        currentFormMethod = string.lower(token.attrs and token.attrs["method"] or "get")
+                    else
+                        currentFormAction = ""
+                    end
+
+                elseif tag == "input" then
+                    local attrs = token.attrs or {}
+                    local inputType   = string.lower(attrs["type"] or "text")
+                    local inputName   = attrs["name"] or "q"
+                    local inputVal    = attrs["value"] or ""
+                    local placeholder = attrs["placeholder"] or attrs["aria-label"] or ""
+
+                    if inputType == "text" or inputType == "search" or inputType == "email" or inputType == "url" or inputType == "number" or inputType == "password" then
+                        commitBlock()
+                        flushBlock({
+                            type        = "input_field",
+                            inputType   = inputType,
+                            name        = inputName,
+                            value       = inputVal,
+                            placeholder = placeholder,
+                            formAction  = currentFormAction,
+                            formMethod  = currentFormMethod,
+                        })
+                    elseif inputType == "submit" or inputType == "button" then
+                        commitBlock()
+                        flushBlock({
+                            type       = "input_submit",
+                            label      = inputVal ~= "" and inputVal or "Submit",
+                            formAction = currentFormAction,
+                            formMethod = currentFormMethod,
+                        })
+                    end
+
+                elseif tag == "textarea" then
+                    if not isClosing then
+                        commitBlock()
+                        inTextarea   = true
+                        textareaName = token.attrs and token.attrs["name"] or "q"
+                        textareaBuffer = ""
+                    else
+                        inTextarea = false
+                        flushBlock({
+                            type        = "input_field",
+                            inputType   = "textarea",
+                            name        = textareaName,
+                            value       = textareaBuffer,
+                            placeholder = "",
+                            formAction  = currentFormAction,
+                            formMethod  = currentFormMethod,
+                        })
+                        textareaBuffer = ""
+                    end
+
+                elseif tag == "button" then
+                    if not isClosing then
+                        local btype = string.lower(token.attrs and token.attrs["type"] or "submit")
+                        if btype == "submit" or btype == "button" then
+                            commitBlock()
+                            inButton = true
+                            buttonLabel = ""
+                            buttonFormAction = currentFormAction
+                        end
+                    else
+                        if inButton then
+                            inButton = false
+                            local label = trimStr(buttonLabel)
+                            flushBlock({
+                                type       = "input_submit",
+                                label      = label ~= "" and label or "Submit",
+                                formAction = buttonFormAction,
+                                formMethod = currentFormMethod,
+                            })
+                            buttonLabel = ""
+                        end
+                    end
+
                 elseif tag == "img" and token.attrs then
                     local src = token.attrs["src"] or token.attrs["data-src"] or ""
                     if src == "" and token.attrs["srcset"] then
@@ -316,13 +448,12 @@ function Readability.distill(tokens, rawTitle, baseUrl)
     local bestBlocks = {}
 
     if best and #best.blocks > 0 then
-        for _, blk in ipairs(best.blocks) do
-            table.insert(bestBlocks, blk)
-        end
-        -- Merge secondary containers if substantial
-        for i = 2, math.min(5, #containers) do
-            local c = containers[i]
-            if c and c.score > (best.score * 0.15) and not c.isNav and #c.blocks > 0 then
+        local threshold = best.score * 0.15
+        -- Walk containers in DOCUMENT order so paragraph fragments stay
+        -- contiguous and the merge pass can rejoin them; include every
+        -- non-nav container that carries a meaningful share of content.
+        for _, c in ipairs(containers) do
+            if not c.isNav and #c.blocks > 0 and (c == best or c.score >= threshold) then
                 for _, blk in ipairs(c.blocks) do
                     table.insert(bestBlocks, blk)
                 end
@@ -367,7 +498,7 @@ function Readability.distill(tokens, rawTitle, baseUrl)
 
     table.insert(finalBlocks, { type = "hr" })
 
-    for _, blk in ipairs(bestBlocks) do
+    for _, blk in ipairs(mergeParagraphFragments(bestBlocks)) do
         table.insert(finalBlocks, blk)
     end
 

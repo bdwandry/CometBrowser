@@ -113,10 +113,18 @@ end
 
 local function submitForm(formAction, inputBlock)
     if not formAction or formAction == "" or formAction == "#" then return end
-    local query = ""
-    if inputBlock and inputBlock.name and inputBlock.name ~= "" then
-        query = URL.encode(inputBlock.name) .. "=" .. URL.encode(inputBlock.value or "")
+    local pairs = {}
+    for _, item in ipairs(Layout.renderItems or {}) do
+        if item.type == "input_field" and item.formAction == formAction then
+            if item.name and item.name ~= "" then
+                table.insert(pairs, URL.encode(item.name) .. "=" .. URL.encode(item.value or ""))
+            end
+        end
     end
+    if #pairs == 0 and inputBlock then
+        table.insert(pairs, URL.encode(inputBlock.name or "q") .. "=" .. URL.encode(inputBlock.value or ""))
+    end
+    local query = table.concat(pairs, "&")
     local sep = string.find(formAction, "?") and "&" or "?"
     local target = formAction .. (query ~= "" and (sep .. query) or "")
     navigateTo(target)
@@ -211,6 +219,7 @@ executeNavigation = function(urlString)
             progressTotal   = tot or 0
         end,
         onSuccess = function(status, headers, body, finalUrl)
+            print("ZQFETCH OK status=" .. tostring(status) .. " bytes=" .. #(body or ""))
             local resolvedUrl = finalUrl or parsed.normalized
             currentUrlObj = URL.parse(resolvedUrl)
 
@@ -223,6 +232,7 @@ executeNavigation = function(urlString)
             collectgarbage("collect")
 
             if parseOk and doc then
+                print("ZQPARSE ok reader=" .. tostring(doc.isReaderMode) .. " blocks=" .. tostring(#(doc.blocks or {})))
                 currentDoc = doc
                 pageTitle  = doc.title or currentUrlObj.host or "Web Page"
 
@@ -234,6 +244,17 @@ executeNavigation = function(urlString)
                 collectgarbage("collect")
 
                 if layoutOk then
+                    print("ZQITEMS " .. tostring(#(Layout.renderItems or {})))
+                    print("=== ZQBLOCKS start ===")
+                    for i, blk in ipairs(currentDoc.blocks or {}) do
+                        local txt = ""
+                        if blk.inlines then
+                            for _, inl in ipairs(blk.inlines) do txt = txt .. (inl.text or "") end
+                        elseif blk.text then txt = blk.text end
+                        if #txt > 90 then txt = string.sub(txt, 1, 90) .. "..." end
+                        print(i .. "[" .. (blk.type or "?") .. "]" .. (blk.level and (" h"..blk.level) or "") .. " |" .. txt .. "|")
+                    end
+                    print("=== ZQBLOCKS end ===")
                     scrollY = 0
                     targetScrollY = 0
                     crankVelocity = 0
@@ -250,6 +271,7 @@ executeNavigation = function(urlString)
 
                     return
                 else
+                    print("ZQLAYOUT-ERR " .. tostring(lErr))
                     ErrorPage.show("Layout Error: " .. tostring(lErr), parsed.normalized)
                     currentState = Constants.STATE_ERROR
                     pageTitle    = "Render Error"
@@ -265,6 +287,7 @@ executeNavigation = function(urlString)
             end
         end,
         onError = function(err)
+            print("ZQFETCH ERROR: " .. tostring(err))
             ErrorPage.show(err, parsed.normalized)
             currentState = Constants.STATE_ERROR
             pageTitle    = "Connection Error"
@@ -289,6 +312,11 @@ pendingNavUrl = "about:home"
 function playdate.update()
     gfx.clear()
 
+    -- Live-sync on-screen keyboard text into the focused input field
+    if keyboardOpen and activeInputField then
+        activeInputField.value = playdate.keyboard.text or ""
+    end
+
     if pendingNavUrl then
         local dest = pendingNavUrl
         pendingNavUrl = nil
@@ -308,8 +336,10 @@ function playdate.update()
 
     -- ── HOME STATE ────────────────────────────────────────────────────────────
     if currentState == Constants.STATE_HOME then
-        local selUrl = HomePage.handleInput()
-        if selUrl then navigateTo(selUrl) end
+        if not AddressBar.isOpen then
+            local selUrl = HomePage.handleInput()
+            if selUrl then navigateTo(selUrl) end
+        end
         HomePage.draw(crankChange)
 
         if playdate.buttonJustPressed(playdate.kButtonB) and not AddressBar.isOpen then
@@ -322,7 +352,7 @@ function playdate.update()
         local maxScroll = math.max(0, totalH - Constants.CONTENT_HEIGHT)
         local isHtmlMode = (currentBrowseMode == Constants.MODE_RAW_HTML)
 
-        if not keyboardOpen then
+        if not keyboardOpen and not AddressBar.isOpen then
             -- ── READER MODE: crank scrolls up/down, D-Pad navigates links ──────
             if not isHtmlMode then
                 targetScrollY = targetScrollY + crankVelocity
@@ -364,11 +394,21 @@ function playdate.update()
                     end
                 end
 
-                -- (A) alone = Follow focused link
+                -- (A) alone = Follow focused link / activate form input
                 if playdate.buttonJustPressed(playdate.kButtonA) and not playdate.buttonIsPressed(playdate.kButtonLeft) and not playdate.buttonIsPressed(playdate.kButtonRight) then
                     local activeLink = LinkManager.getSelectedLink()
-                    if activeLink and activeLink.href then
-                        navigateTo(activeLink.href)
+                    if activeLink then
+                        local primary = activeLink.primaryRect or (activeLink.rects and activeLink.rects[1])
+                        if primary and primary.isFormInput and primary.inputBlock then
+                            local block = primary.inputBlock
+                            if block.type == "input_field" then
+                                openKeyboardForInput(block)
+                            elseif block.type == "input_submit" then
+                                submitForm(block.formAction, block)
+                            end
+                        elseif activeLink.href then
+                            navigateTo(activeLink.href)
+                        end
                     end
                 end
 
@@ -520,18 +560,20 @@ function playdate.update()
 
     -- ── ERROR STATE ───────────────────────────────────────────────────────────
     elseif currentState == Constants.STATE_ERROR then
-        local action = ErrorPage.handleInput()
-        if action == "retry" then
-            if currentUrlObj then navigateTo(currentUrlObj.normalized) end
-        elseif action == "search" then
-            AddressBar.open("", function(newUrl) navigateTo(newUrl) end)
-        elseif action == "home" then
-            navigateTo("about:home")
-        end
+        if not AddressBar.isOpen then
+            local action = ErrorPage.handleInput()
+            if action == "retry" then
+                if currentUrlObj then navigateTo(currentUrlObj.normalized) end
+            elseif action == "search" then
+                AddressBar.open("", function(newUrl) navigateTo(newUrl) end)
+            elseif action == "home" then
+                navigateTo("about:home")
+            end
 
-        if playdate.buttonJustPressed(playdate.kButtonLeft) then
-            local prev = goBack()
-            navigateTo(prev or "about:home")
+            if playdate.buttonJustPressed(playdate.kButtonLeft) then
+                local prev = goBack()
+                navigateTo(prev or "about:home")
+            end
         end
 
         ErrorPage.draw()

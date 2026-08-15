@@ -109,7 +109,7 @@ function Readability.distill(tokens, rawTitle, baseUrl)
         if not text or text == "" then return end
         text = Entities.decode(text)
         if not inPre then
-            text = string.gsub(text, "[%r%n%t]+", " ")
+            text = string.gsub(text, "[\r\n\t]+", " ")
         end
         if text == "" or text == " " then return end
 
@@ -258,7 +258,7 @@ function Readability.distill(tokens, rawTitle, baseUrl)
                 elseif tag == "a" then
                     if not isClosing then
                         local rawHref = token.attrs and token.attrs["href"] or ""
-                        if rawHref ~= "" and not string.match(rawHref, "^#") and not string.match(rawHref, "^javascript:") then
+                        if rawHref ~= "" and not string.match(rawHref, "^#") and not string.match(rawHref, "^[Jj][Aa][Vv][Aa][Ss][Cc][Rr][Ii][Pp][Tt]:") then
                             currentHref = URL.resolve(baseUrl, rawHref)
                             currentLinkText = ""
                         end

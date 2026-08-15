@@ -5,6 +5,25 @@ Tokenizer = {}
 
 local MAX_HTML_SIZE = 131072 -- 128KB max buffer size
 
+-- Find the closing ">" of a tag, ignoring ">" that appear inside quoted attribute values
+local function findTagEnd(html, startPos)
+    local i = startPos
+    local quote = nil
+    local n = #html
+    while i <= n do
+        local c = string.sub(html, i, i)
+        if quote then
+            if c == quote then quote = nil end
+        elseif c == '"' or c == "'" then
+            quote = c
+        elseif c == ">" then
+            return i
+        end
+        i = i + 1
+    end
+    return nil
+end
+
 -- Parse tag attribute string into key/value table
 local function parseAttributes(attrStr)
     local attrs = {}
@@ -60,8 +79,8 @@ function Tokenizer.tokenize(html)
             end
         end
 
-        -- Find closing bracket of tag
-        local tagEnd = string.find(html, ">", tagStart, true)
+        -- Find closing bracket of tag (respecting quotes in attribute values)
+        local tagEnd = findTagEnd(html, tagStart + 1)
         if not tagEnd then
             local text = string.sub(html, tagStart)
             table.insert(tokens, { type = "text", content = Entities.decode(text) })

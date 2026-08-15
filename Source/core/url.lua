@@ -175,7 +175,7 @@ function URL.resolve(baseUrlStr, relativeUrlStr)
     local rel = string.gsub(relativeUrlStr, "^%s*(.-)%s*$", "%1")
     
     -- Absolute URL with scheme
-    if string.match(rel, "^[a-zA-Z][%w+%-%.]*://") or string.match(rel, "^about:") or string.match(rel, "^data:") or string.match(rel, "^javascript:") then
+    if string.match(rel, "^[a-zA-Z][%w+%-%.]*://") or string.match(rel, "^about:") or string.match(rel, "^data:") or string.match(rel, "^[Jj][Aa][Vv][Aa][Ss][Cc][Rr][Ii][Pp][Tt]:") then
         return rel
     end
 

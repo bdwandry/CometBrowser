@@ -543,29 +543,33 @@ local function updateFrame()
                         targetScrollY = targetScrollY + 3 * (1 + strength * 3)
                     end
 
-                    -- (A) = Left Click: follow hovered link or activate input
-                    if playdate.buttonJustPressed(playdate.kButtonA) then
-                        local hitLink = LinkManager.getHoveredLink(mouseX, mouseY + scrollY)
-                        if hitLink then
-                            local primary = hitLink.primaryRect or (hitLink.rects and hitLink.rects[1])
-                            if primary and primary.isFormInput and primary.inputBlock then
-                                local block = primary.inputBlock
-                                if block.type == "input_field" then
-                                    openKeyboardForInput(block)
-                                elseif block.type == "input_submit" then
-                                    submitForm(block.formAction, block)
-                                end
-                            elseif hitLink.href then
-                                navigateTo(hitLink.href)
-                            end
-                        end
-                    end
-
                     -- (B) = Right Click: open Address Bar (context action)
                     if playdate.buttonJustPressed(playdate.kButtonB) and not AddressBar.isOpen then
                         local curUrlStr = currentUrlObj and currentUrlObj.normalized or ""
                         AddressBar.open(curUrlStr, function(newUrl) navigateTo(newUrl) end)
                         addressBarKeyboardArmed = true
+                    end
+                end
+            end
+
+            -- (A) = Left Click: follow hovered link or activate input.
+            -- Handled OUTSIDE the A-hold branch: on the press frame buttonIsPressed(A)
+            -- is already true, so a handler nested in the else could never fire.
+            if playdate.buttonJustPressed(playdate.kButtonA) and
+               not playdate.buttonIsPressed(playdate.kButtonLeft) and
+               not playdate.buttonIsPressed(playdate.kButtonRight) then
+                local hitLink = LinkManager.getHoveredLink(mouseX, mouseY + scrollY)
+                if hitLink then
+                    local primary = hitLink.primaryRect or (hitLink.rects and hitLink.rects[1])
+                    if primary and primary.isFormInput and primary.inputBlock then
+                        local block = primary.inputBlock
+                        if block.type == "input_field" then
+                            openKeyboardForInput(block)
+                        elseif block.type == "input_submit" then
+                            submitForm(block.formAction, block)
+                        end
+                    elseif hitLink.href then
+                        navigateTo(hitLink.href)
                     end
                 end
             end

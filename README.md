@@ -1,4 +1,6 @@
-# ☄️ CometBrowser for Playdate
+# ☄️ CometBrowser for Playdate -- 
+
+### Does this have AI All over it? (Yes it does)
 
 **CometBrowser** is a fast, standalone, general-purpose web browser built specifically for the **Playdate handheld console** and **Playdate Simulator**. 
 

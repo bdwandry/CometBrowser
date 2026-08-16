@@ -1,4 +1,5 @@
 -- High-Performance On-Device Layout & Painting Engine for CometBrowser
+import "core/tasks"
 import "core/constants"
 import "render/style"
 import "render/link_manager"
@@ -263,6 +264,8 @@ function Layout.build(doc)
     local boxStack = {}
 
     for _, block in ipairs(doc.blocks) do
+        Tasks.yieldCheck()
+
         -- 1. Reader Header Banner
         if block.type == "reader_header" then
             local badgeH = 28

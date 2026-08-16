@@ -1,4 +1,5 @@
 -- HTML Document Object Model Builder for CometBrowser
+import "core/tasks"
 import "core/url"
 import "html/tokenizer"
 import "html/entities"
@@ -1037,6 +1038,7 @@ function Document.parse(htmlString, baseUrl, mode)
     -- ── Recursive walker ───────────────────────────────────────────────────
     walk = function(node)
         if not node then return end
+        Tasks.yieldCheck()
         if node.kind == "text" then
             handleTextNode(node)
         elseif node.kind == "element" then

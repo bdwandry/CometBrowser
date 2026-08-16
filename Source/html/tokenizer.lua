@@ -1,25 +1,28 @@
 -- Blazing Fast Single-Pass HTML Tokenizer & Parser for CometBrowser
+import "core/tasks"
 import "html/entities"
 
 Tokenizer = {}
 
 local MAX_HTML_SIZE = 262144 -- 256KB max buffer size
 
--- Find the closing ">" of a tag, ignoring ">" that appear inside quoted attribute values
+-- Find the closing ">" of a tag, ignoring ">" that appear inside quoted
+-- attribute values. Uses a single character-class find per scan segment
+-- instead of walking byte-by-byte, which is much faster on the device CPU.
 local function findTagEnd(html, startPos)
     local i = startPos
-    local quote = nil
     local n = #html
     while i <= n do
-        local c = string.sub(html, i, i)
-        if quote then
-            if c == quote then quote = nil end
-        elseif c == '"' or c == "'" then
-            quote = c
-        elseif c == ">" then
-            return i
+        local m = string.find(html, "[>\"']", i)
+        if not m then return nil end
+        local c = string.sub(html, m, m)
+        if c == ">" then
+            return m
         end
-        i = i + 1
+        -- Inside a quoted value: skip ahead to the matching close quote.
+        local close = string.find(html, c, m + 1, true)
+        if not close then return nil end
+        i = close + 1
     end
     return nil
 end
@@ -79,6 +82,8 @@ function Tokenizer.tokenize(html)
     local len = #html
 
     while pos <= len do
+        Tasks.yieldCheck()
+
         local tagStart = string.find(html, "<", pos, true)
         if not tagStart then
             local text = string.sub(html, pos)

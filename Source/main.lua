@@ -6,6 +6,7 @@ import "core/constants"
 import "core/url"
 import "core/storage"
 import "core/http_client"
+import "core/tasks"
 import "core/cookie_jar"
 import "core/logger"
 import "html/document"
@@ -43,6 +44,10 @@ local crankVelocity      = 0
 -- Progress tracking
 local progressCurrent    = 0
 local progressTotal      = 0
+
+-- True while the downloaded HTML is being parsed/laid out (async task); keeps
+-- the LOADING screen visible and informs the user what is happening.
+local isRendering        = false
 
 -- History stack
 local navHistory         = {}
@@ -235,6 +240,12 @@ local runNavigation
 runNavigation = function(urlString)
     if not urlString or urlString == "" then return end
     Logger.log("runNavigation: " .. tostring(urlString))
+
+    -- Any still-running parse/render of a previous page must be dropped; its
+    -- onComplete would otherwise fire later and hijack the new page.
+    Tasks.cancelAll()
+    isRendering = false
+
     urlString = URL.unwrapRedirect(urlString)
     urlString = string.gsub(urlString, "^%s*(.-)%s*$", "%1")
 
@@ -279,83 +290,76 @@ runNavigation = function(urlString)
         onSuccess = function(status, headers, body, finalUrl)
             print("ZQFETCH OK status=" .. tostring(status) .. " bytes=" .. #(body or ""))
             Logger.log("fetch OK status=" .. tostring(status) .. " bytes=" .. #(body or "") .. " url=" .. tostring(finalUrl))
-            local cbOk, cbErr = pcall(function()
-                local resolvedUrl = finalUrl or parsed.normalized
-                currentUrlObj = URL.parse(resolvedUrl)
 
-                local parseOk, doc = pcall(function()
-                    return Document.parse(body, resolvedUrl, currentBrowseMode)
-                end)
+            local resolvedUrl = finalUrl or parsed.normalized
+            currentUrlObj = URL.parse(resolvedUrl)
+            isRendering = true
+            progressCurrent = 0
+            progressTotal   = 0
+            pageTitle       = "Rendering..."
 
-                -- Force garbage collection immediately after parsing the heavy HTML string
-                body = nil
-                collectgarbage("collect")
-
-                if parseOk and doc then
-                    print("ZQPARSE ok reader=" .. tostring(doc.isReaderMode) .. " blocks=" .. tostring(#(doc.blocks or {})))
-                    Logger.log("parse ok reader=" .. tostring(doc.isReaderMode) .. " blocks=" .. tostring(#(doc.blocks or {})))
-                    currentDoc = doc
-                    pageTitle  = doc.title or currentUrlObj.host or "Web Page"
+            -- Parse + layout now runs as a cooperative task so a big page is
+            -- rendered a little each frame instead of stalling the run loop
+            -- for 10+ seconds on the physical device.
+            Tasks.run(
+                function()
+                    local parseOk, doc = pcall(function()
+                        return Document.parse(body, resolvedUrl, currentBrowseMode)
+                    end)
+                    if not parseOk then
+                        error("Parse Error: " .. tostring(doc))
+                    end
 
                     local layoutOk, lErr = pcall(function()
-                        Layout.build(currentDoc)
+                        Layout.build(doc)
                     end)
-
-                    -- Force garbage collection again after laying out UI blocks
-                    collectgarbage("collect")
-
-                    if layoutOk then
-                        print("ZQITEMS " .. tostring(#(Layout.renderItems or {})))
-                        Logger.log("layout ok items=" .. tostring(#(Layout.renderItems or {})))
-                        print("=== ZQBLOCKS start ===")
-                        for i, blk in ipairs(currentDoc.blocks or {}) do
-                            local txt = ""
-                            if blk.inlines then
-                                for _, inl in ipairs(blk.inlines) do txt = txt .. (inl.text or "") end
-                            elseif blk.text then txt = blk.text end
-                            if #txt > 90 then txt = string.sub(txt, 1, 90) .. "..." end
-                            print(i .. "[" .. (blk.type or "?") .. "]" .. (blk.level and (" h"..blk.level) or "") .. " |" .. txt .. "|")
-                        end
-                        print("=== ZQBLOCKS end ===")
-                        scrollY = 0
-                        targetScrollY = 0
-                        crankVelocity = 0
-                        currentState = Constants.STATE_PAGE
-                        Storage.addHistory(pageTitle, resolvedUrl)
-                        updateSystemMenu()
-
-                        -- Enqueue all images for background download
-                        for _, blk in ipairs(currentDoc.blocks or {}) do
-                            if blk.type == "image" and blk.src and blk.src ~= "" then
-                                ImageDecoder.enqueue(blk.src)
-                            end
-                        end
-
-                        return
-                    else
-                        print("ZQLAYOUT-ERR " .. tostring(lErr))
-                        ErrorPage.show("Layout Error: " .. tostring(lErr), parsed.normalized)
-                        currentState = Constants.STATE_ERROR
-                        pageTitle    = "Render Error"
-                        updateSystemMenu()
-                        return
+                    if not layoutOk then
+                        error("Layout Error: " .. tostring(lErr))
                     end
-                else
-                    ErrorPage.show("Parse Error: " .. tostring(doc), parsed.normalized)
+
+                    print("ZQPARSE ok reader=" .. tostring(doc.isReaderMode) .. " blocks=" .. tostring(#(doc.blocks or {})))
+                    Logger.log("parse ok reader=" .. tostring(doc.isReaderMode) .. " blocks=" .. tostring(#(doc.blocks or {})))
+                    print("ZQITEMS " .. tostring(#(Layout.renderItems or {})))
+                    Logger.log("layout ok items=" .. tostring(#(Layout.renderItems or {})))
+                    print("=== ZQBLOCKS start ===")
+                    for i, blk in ipairs(doc.blocks or {}) do
+                        local txt = ""
+                        if blk.inlines then
+                            for _, inl in ipairs(blk.inlines) do txt = txt .. (inl.text or "") end
+                        elseif blk.text then txt = blk.text end
+                        if #txt > 90 then txt = string.sub(txt, 1, 90) .. "..." end
+                        print(i .. "[" .. (blk.type or "?") .. "]" .. (blk.level and (" h"..blk.level) or "") .. " |" .. txt .. "|")
+                    end
+                    print("=== ZQBLOCKS end ===")
+
+                    return doc
+                end,
+                function(doc)
+                    isRendering = false
+                    currentDoc = doc
+                    pageTitle  = doc.title or currentUrlObj.host or "Web Page"
+                    scrollY = 0
+                    targetScrollY = 0
+                    crankVelocity = 0
+                    currentState = Constants.STATE_PAGE
+                    Storage.addHistory(pageTitle, resolvedUrl)
+                    updateSystemMenu()
+
+                    -- Enqueue all images for background download
+                    for _, blk in ipairs(currentDoc.blocks or {}) do
+                        if blk.type == "image" and blk.src and blk.src ~= "" then
+                            ImageDecoder.enqueue(blk.src)
+                        end
+                    end
+                end,
+                function(err)
+                    isRendering = false
+                    ErrorPage.show(err, parsed.normalized)
                     currentState = Constants.STATE_ERROR
                     pageTitle    = "Render Error"
                     updateSystemMenu()
-                    return
                 end
-            end)
-            if not cbOk then
-                print("ZQNAV-CB-ERR: " .. tostring(cbErr))
-                Logger.error("navigation callback: " .. tostring(cbErr))
-                ErrorPage.show("Render Error: " .. tostring(cbErr), parsed.normalized)
-                currentState = Constants.STATE_ERROR
-                pageTitle    = "Render Error"
-                updateSystemMenu()
-            end
+            )
         end,
         onError = function(err)
             print("ZQFETCH ERROR: " .. tostring(err))
@@ -444,6 +448,7 @@ local function updateFrame()
     HttpClient.update()
     ImageDecoder.update()
     playdate.timer.updateTimers()
+    Tasks.update()
 
     -- Deferred address-bar keyboard: opens the on-screen keyboard on B release,
     -- but if Left/Right is pressed instead, cancel it and navigate back/forward.
@@ -657,14 +662,27 @@ local function updateFrame()
 
         gfx.setColor(gfx.kColorBlack)
         gfx.setFont(fontH)
-        gfx.drawText("Loading Web Page...", 24, 60)
+        if isRendering then
+            gfx.drawText("Rendering Web Page...", 24, 60)
+        else
+            gfx.drawText("Loading Web Page...", 24, 60)
+        end
         gfx.setFont(fontB)
 
         local displayHost = currentUrlObj and currentUrlObj.normalized or "Web Request"
         if #displayHost > 45 then displayHost = string.sub(displayHost, 1, 42) .. "..." end
         gfx.drawText(displayHost, 24, 90)
 
-        if progressTotal > 0 then
+        if isRendering then
+            -- Indeterminate progress: a gentle pulsing bar while the page is
+            -- being parsed and laid out across frames.
+            local ms = playdate.getCurrentTimeMilliseconds()
+            local phase = (ms % 2000) / 2000
+            local barW = math.floor(352 * (0.2 + 0.8 * math.abs(phase * 2 - 1)))
+            gfx.drawRect(24, 138, 352, 10)
+            gfx.fillRect(24, 138, barW, 10)
+            gfx.drawText("Parsing HTML & laying out page...", 24, 116)
+        elseif progressTotal > 0 then
             local pct = math.floor((progressCurrent / progressTotal) * 100)
             gfx.drawText(string.format("Received: %d / %d bytes (%d%%)", progressCurrent, progressTotal, pct), 24, 116)
             gfx.drawRect(24, 138, 352, 10)

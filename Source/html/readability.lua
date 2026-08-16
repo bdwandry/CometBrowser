@@ -1,4 +1,5 @@
 -- Smart Article Extractor & Reader Mode Distiller for CometBrowser
+import "core/tasks"
 import "core/url"
 import "html/entities"
 
@@ -168,7 +169,7 @@ function Readability.distill(tokens, rawTitle, baseUrl)
     local function addText(text)
         if stripDepth > 0 then return end
         if not text or text == "" then return end
-        text = Entities.decode(text)
+        -- Tokenizer already entity-decoded this text.
         if not inPre then
             text = string.gsub(text, "[\r\n\t]+", " ")
         end
@@ -216,6 +217,8 @@ function Readability.distill(tokens, rawTitle, baseUrl)
     end
 
     for _, token in ipairs(tokens) do
+        Tasks.yieldCheck()
+
         if token.type == "text" then
             if stripDepth == 0 then
                 if inPre then

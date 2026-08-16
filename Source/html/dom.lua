@@ -4,6 +4,7 @@
 -- spans) survive intact. Implements a simplified version of the WHATWG tree
 -- construction rules: void elements, raw-text/ignored subtrees, and the
 -- common implied-end-tag rules (p, li, dt/dd, tr, td/th, option).
+import "core/tasks"
 
 DOM = {}
 
@@ -164,6 +165,8 @@ function DOM.build(tokens)
     local skipTag = nil
 
     for _, tok in ipairs(tokens or {}) do
+        Tasks.yieldCheck()
+
         if count >= MAX_NODES then break end
 
         if skipDepth > 0 then

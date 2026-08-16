@@ -42,37 +42,40 @@ end
 -- back into one flowing paragraph, so they don't each render on their own line.
 local function mergeParagraphFragments(blocks)
     local out = {}
+    local lastAccum = nil  -- trimmed text of out[#out] when it is a paragraph
     for _, blk in ipairs(blocks) do
         local merged = false
         if blk.type == "paragraph" then
             local last = out[#out]
-            if last and last.type == "paragraph" then
-                local lastText = ""
-                for _, inl in ipairs(last.inlines or {}) do
-                    lastText = lastText .. (inl.text or "")
-                end
-                lastText = trimStr(lastText)
-                local curText = ""
-                for _, inl in ipairs(blk.inlines or {}) do
-                    curText = curText .. (inl.text or "")
-                end
-                curText = trimStr(curText)
+            local curText = ""
+            for _, inl in ipairs(blk.inlines or {}) do
+                curText = curText .. (inl.text or "")
+            end
+            curText = trimStr(curText)
+            if last and last.type == "paragraph" and lastAccum then
                 -- Only join when the previous block does not end a sentence and
                 -- the combined text stays small (i.e. this is a continuation).
-                if not string.match(lastText, "[%.%?!%:]%s*$") and
-                   #(lastText .. curText) <= 200 and wordCount(curText) <= 40 then
-                    print("ZQMERGE OK [" .. lastText .. "] + [" .. curText .. "]")
+                if not string.match(lastAccum, "[%.%?!%:]%s*$") and
+                   #lastAccum + #curText <= 200 and wordCount(curText) <= 40 then
                     for _, inl in ipairs(blk.inlines or {}) do
                         table.insert(last.inlines, inl)
                     end
+                    lastAccum = trimStr(lastAccum .. curText)
                     merged = true
-                else
-                    print("ZQMERGE SKIP [" .. lastText .. "] + [" .. curText .. "]")
                 end
             end
         end
         if not merged then
             table.insert(out, blk)
+            if blk.type == "paragraph" then
+                local t = ""
+                for _, inl in ipairs(blk.inlines or {}) do
+                    t = t .. (inl.text or "")
+                end
+                lastAccum = trimStr(t)
+            else
+                lastAccum = nil
+            end
         end
     end
     return out
@@ -216,8 +219,9 @@ function Readability.distill(tokens, rawTitle, baseUrl)
         end
     end
 
-    for _, token in ipairs(tokens) do
+    for i, token in ipairs(tokens) do
         Tasks.yieldCheck()
+        Tasks.reportProgress(0.5 + 0.3 * (i / #tokens))
 
         if token.type == "text" then
             if stripDepth == 0 then

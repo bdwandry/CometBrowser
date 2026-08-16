@@ -15,53 +15,69 @@ local function findTagEnd(html, startPos)
     while i <= n do
         local m = string.find(html, "[>\"']", i)
         if not m then return nil end
-        local c = string.sub(html, m, m)
-        if c == ">" then
+        local b = string.byte(html, m)
+        if b == 62 then  -- '>'
             return m
         end
         -- Inside a quoted value: skip ahead to the matching close quote.
-        local close = string.find(html, c, m + 1, true)
+        local close = string.find(html, string.char(b), m + 1, true)
         if not close then return nil end
         i = close + 1
     end
     return nil
 end
 
--- Parse tag attribute string into key/value table
+-- Parse tag attribute string into key/value table. Single pass with byte
+-- checks instead of several full-pattern passes: the old gmatch-based version
+-- backtracked pathologically on long URLs inside quotes and leaked bogus
+-- query-param attributes out of quoted values.
 local function parseAttributes(attrStr)
     local attrs = {}
     if not attrStr or attrStr == "" then return attrs end
-
-    -- Match key="value", key='value', or key=value
-    for key, val in string.gmatch(attrStr, '([%w%-_:]+)%s*=%s*"([^"]*)"') do
-        attrs[string.lower(key)] = Entities.decode(val)
-    end
-    for key, val in string.gmatch(attrStr, "([%w%-_:]+)%s*=%s*'([^']*)'") do
-        local lkey = string.lower(key)
-        if not attrs[lkey] then
-            attrs[lkey] = Entities.decode(val)
+    local n = #attrStr
+    local i = 1
+    while i <= n do
+        local s = string.find(attrStr, "%S", i)
+        if not s then break end
+        i = s
+        local ke = string.find(attrStr, "[^%w%-_:]", s)
+        if not ke then ke = n + 1 end
+        if ke == s then i = s + 1 else
+            local key = string.sub(attrStr, s, ke - 1)
+            if string.find(attrStr, "^%s*=", ke) then
+                local vs = string.find(attrStr, "%S", ke + 1)
+                if not vs then
+                    -- key= with nothing after it
+                    local lk = string.lower(key)
+                    if attrs[lk] == nil then attrs[lk] = "" end
+                    break
+                end
+                local c = string.byte(attrStr, vs)
+                local lk = string.lower(key)
+                if c == 34 then
+                    local ve = string.find(attrStr, '"', vs + 1, true)
+                    if not ve then break end
+                    if attrs[lk] == nil then attrs[lk] = Entities.decode(string.sub(attrStr, vs + 1, ve - 1)) end
+                    i = ve + 1
+                elseif c == 39 then
+                    local ve = string.find(attrStr, "'", vs + 1, true)
+                    if not ve then break end
+                    if attrs[lk] == nil then attrs[lk] = Entities.decode(string.sub(attrStr, vs + 1, ve - 1)) end
+                    i = ve + 1
+                else
+                    local ve = string.find(attrStr, "[^%w%-_%.%/%?%#]", vs)
+                    if not ve then ve = n + 1 end
+                    if attrs[lk] == nil then attrs[lk] = Entities.decode(string.sub(attrStr, vs, ve - 1)) end
+                    i = ve
+                end
+            else
+                -- Boolean attribute (checked, selected, disabled, open, ...)
+                local lk = string.lower(key)
+                if attrs[lk] == nil then attrs[lk] = true end
+                i = ke
+            end
         end
     end
-    for key, val in string.gmatch(attrStr, '([%w%-_:]+)%s*=%s*([%w%-_%.%/%?%#]+)') do
-        local lkey = string.lower(key)
-        if not attrs[lkey] then
-            attrs[lkey] = Entities.decode(val)
-        end
-    end
-
-    -- Boolean attributes (checked, selected, disabled, open, ...): bare
-    -- names with no "=" get the value true. Quoted and unquoted values are
-    -- masked out first so words inside values aren't mistaken for names.
-    local bare = string.gsub(attrStr, '="[^"]*"', " ")
-    bare = string.gsub(bare, "='[^']*'", " ")
-    bare = string.gsub(bare, "=%s*[%w%-_%.%/%?%#]+", " ")
-    for key in string.gmatch(bare, "([%w%-_:]+)") do
-        local lkey = string.lower(key)
-        if attrs[lkey] == nil then
-            attrs[lkey] = true
-        end
-    end
-
     return attrs
 end
 
@@ -83,6 +99,7 @@ function Tokenizer.tokenize(html)
 
     while pos <= len do
         Tasks.yieldCheck()
+        Tasks.reportProgress(0.5 * (pos / len))
 
         local tagStart = string.find(html, "<", pos, true)
         if not tagStart then
@@ -112,6 +129,11 @@ function Tokenizer.tokenize(html)
         local rawInside = string.sub(html, tagStart + 1, tagEnd - 1)
         rawInside = string.gsub(rawInside, "^%s*(.-)%s*$", "%1")
 
+        -- Lowercase the first few bytes once and dispatch with plain string
+        -- comparisons instead of running several case-insensitive patterns
+        -- against every tag (this is a hot path for tag-heavy pages).
+        local head = string.lower(string.sub(rawInside, 1, 8))
+
         -- 1. HTML Comments: <!-- ... -->
         if string.sub(rawInside, 1, 3) == "!--" then
             local commentEnd = string.find(html, "-->", tagStart, true)
@@ -122,7 +144,7 @@ function Tokenizer.tokenize(html)
             end
 
         -- 2. Skip <script> ... </script>
-        elseif string.match(rawInside, "^[sS][cC][rR][iI][pP][tT]") then
+        elseif string.sub(head, 1, 6) == "script" then
             local scriptClose = string.find(html, "</[sS][cC][rR][iI][pP][tT]>", tagEnd, false)
             if scriptClose then
                 local nextGt = string.find(html, ">", scriptClose, true)
@@ -132,7 +154,7 @@ function Tokenizer.tokenize(html)
             end
 
         -- 3. Skip <style> ... </style>
-        elseif string.match(rawInside, "^[sS][tT][yY][lL][eE]") then
+        elseif string.sub(head, 1, 5) == "style" then
             local styleClose = string.find(html, "</[sS][tT][yY][lL][eE]>", tagEnd, false)
             if styleClose then
                 local nextGt = string.find(html, ">", styleClose, true)
@@ -142,7 +164,7 @@ function Tokenizer.tokenize(html)
             end
 
         -- 4. Skip <svg> ... </svg>  and  <math> ... </math>
-        elseif string.match(rawInside, "^[sS][vV][gG]") then
+        elseif string.sub(head, 1, 3) == "svg" then
             local svgClose = string.find(html, "</[sS][vV][gG]>", tagEnd, false)
             if svgClose then
                 local nextGt = string.find(html, ">", svgClose, true)
@@ -150,7 +172,7 @@ function Tokenizer.tokenize(html)
             else
                 pos = len + 1
             end
-        elseif string.match(rawInside, "^[mM][aA][tT][hH]") then
+        elseif string.sub(head, 1, 4) == "math" then
             local mathClose = string.find(html, "</[mM][aA][tT][hH]>", tagEnd, false)
             if mathClose then
                 local nextGt = string.find(html, ">", mathClose, true)
@@ -160,7 +182,7 @@ function Tokenizer.tokenize(html)
             end
 
         -- 5. Page <title>
-        elseif string.match(rawInside, "^[tT][iI][tT][lL][eE]") then
+        elseif string.sub(head, 1, 5) == "title" then
             local titleClose = string.find(html, "</[tT][iI][tT][lL][eE]>", tagEnd, false)
             if titleClose then
                 local titleText = string.sub(html, tagEnd + 1, titleClose - 1)

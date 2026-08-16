@@ -23,6 +23,7 @@ local frameStartMs = 0
 local inside       = false
 local queue        = {}
 local gcPending    = false
+local progressValue = 0
 
 -- Call from the hot loops of any heavy work. On the Playdate, coroutine.yield
 -- is only legal inside a coroutine we resume, so when called outside a task
@@ -37,10 +38,22 @@ function Tasks.yieldCheck()
     end
 end
 
+-- Report monotonic progress of the running task as a fraction in [0,1].
+-- Fractional progress is ignored so the bar can never move backwards.
+function Tasks.reportProgress(f)
+    if f > 1 then f = 1 elseif f < 0 then f = 0 end
+    if f > progressValue then progressValue = f end
+end
+
+function Tasks.getProgress()
+    return progressValue
+end
+
 -- Schedule a coroutine task. fn should call Tasks.yieldCheck() in its hot
 -- loops. onComplete(result) runs when the task finishes normally;
 -- onError(message) runs if it raises an error.
 function Tasks.run(fn, onComplete, onError)
+    progressValue = 0
     table.insert(queue, {
         co = coroutine.create(fn),
         onComplete = onComplete,
@@ -57,6 +70,7 @@ end
 function Tasks.cancelAll()
     if #queue > 0 then
         queue = {}
+        progressValue = 0
         gcPending = true
     end
 end
@@ -82,6 +96,7 @@ function Tasks.update()
         if ok then
             task.result = result
             if coroutine.status(task.co) == "dead" then
+                progressValue = 1
                 table.remove(queue, 1)
                 Tasks.scheduleGC()
                 if task.onComplete then

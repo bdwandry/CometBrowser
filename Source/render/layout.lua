@@ -263,8 +263,9 @@ function Layout.build(doc)
     local maxWidth = Constants.CONTENT_TEXT_WIDTH - 4
     local boxStack = {}
 
-    for _, block in ipairs(doc.blocks) do
+    for i, block in ipairs(doc.blocks) do
         Tasks.yieldCheck()
+        Tasks.reportProgress(0.8 + 0.2 * (i / math.max(1, #doc.blocks)))
 
         -- 1. Reader Header Banner
         if block.type == "reader_header" then

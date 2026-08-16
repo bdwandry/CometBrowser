@@ -164,8 +164,9 @@ function DOM.build(tokens)
     local skipDepth = 0
     local skipTag = nil
 
-    for _, tok in ipairs(tokens or {}) do
+    for i, tok in ipairs(tokens or {}) do
         Tasks.yieldCheck()
+        Tasks.reportProgress(0.5 + 0.3 * (i / math.max(1, #tokens)))
 
         if count >= MAX_NODES then break end
 

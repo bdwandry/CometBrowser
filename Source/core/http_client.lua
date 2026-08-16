@@ -454,8 +454,16 @@ function HttpClient.update()
                 end
                 local tot = contentLength
                 if not tot or tot < 0 then tot = 0 end
+                local cur = 0
+                if bodyStart then
+                    -- Report body bytes only (requestBuffer includes headers),
+                    -- and never overshoot the known total.
+                    cur = #requestBuffer - bodyStart + 1
+                    if cur < 0 then cur = 0 end
+                    if tot > 0 and cur > tot then cur = tot end
+                end
                 if activeCallbacks and activeCallbacks.onProgress then
-                    pcall(activeCallbacks.onProgress, #requestBuffer, tot)
+                    pcall(activeCallbacks.onProgress, cur, tot)
                 end
             else
                 local terr = nil

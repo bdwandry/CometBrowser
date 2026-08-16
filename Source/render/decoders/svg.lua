@@ -3,23 +3,26 @@ local gfx = playdate.graphics
 
 SVGDecoder = {}
 
-function SVGDecoder.decode(xmlString)
+function SVGDecoder.decode(xmlString, maxW, maxH)
     if not xmlString or not string.match(xmlString, "<svg") then return nil end
+
+    maxW = maxW or 360
+    maxH = maxH or 200
 
     -- Extract viewBox: minX minY width height
     local vbMinX, vbMinY, vbW, vbH = string.match(xmlString, "viewBox%s*=%s*[\"']%s*([%-%d%.]+)%s+([%-%d%.]+)%s+([%-%d%.]+)%s+([%-%d%.]+)")
-    local wAttr = string.match(xmlString, 'width%s*=%s*["\'](%d+)')
-    local hAttr = string.match(xmlString, 'height%s*=%s*["\'](%d+)')
+    local wRaw = string.match(xmlString, 'width%s*=%s*["\']([%d%.]+)')
+    local hRaw = string.match(xmlString, 'height%s*=%s*["\']([%d%.]+)')
 
-    local srcW = tonumber(vbW) or tonumber(wAttr) or 100
-    local srcH = tonumber(vbH) or tonumber(hAttr) or 100
+    local srcW = tonumber(vbW) or tonumber(wRaw) or 100
+    local srcH = tonumber(vbH) or tonumber(hRaw) or 100
     local minX = tonumber(vbMinX) or 0
     local minY = tonumber(vbMinY) or 0
 
     if srcW <= 0 or srcH <= 0 then return nil end
 
-    -- Scale to fit Playdate screen bounds (max 360x160)
-    local scale = math.min(320 / srcW, 140 / srcH)
+    -- Scale to fit caller-specified bounds
+    local scale = math.min(maxW / srcW, maxH / srcH)
     if scale > 2 then scale = 2 end
     local targetW = math.max(20, math.floor(srcW * scale))
     local targetH = math.max(20, math.floor(srcH * scale))

@@ -296,7 +296,6 @@ runNavigation = function(urlString)
             progressTotal   = tot or 0
         end,
         onSuccess = function(status, headers, body, finalUrl)
-            print("ZQFETCH OK status=" .. tostring(status) .. " bytes=" .. #(body or ""))
             Logger.log("fetch OK status=" .. tostring(status) .. " bytes=" .. #(body or "") .. " url=" .. tostring(finalUrl))
 
             local resolvedUrl = finalUrl or parsed.normalized
@@ -304,7 +303,6 @@ runNavigation = function(urlString)
             renderBody(body, resolvedUrl, true)
         end,
         onError = function(err)
-            print("ZQFETCH ERROR: " .. tostring(err))
             Logger.log("fetch ERROR: " .. tostring(err))
             ErrorPage.show(err, parsed.normalized)
             currentState = Constants.STATE_ERROR
@@ -322,7 +320,6 @@ executeNavigation = function(urlString)
         runNavigation(urlString)
     end)
     if not ok then
-        print("ZQNAV-ERR: " .. tostring(err))
         Logger.error("executeNavigation: " .. tostring(err))
         ErrorPage.show("Navigation Error: " .. tostring(err), urlString)
         currentState = Constants.STATE_ERROR
@@ -343,6 +340,8 @@ renderBody = function(body, url, addToHistory)
     pageTitle       = "Rendering..."
     currentState    = Constants.STATE_LOADING
 
+    Logger.log("renderBody START url=" .. url .. " mode=" .. tostring(currentBrowseMode) .. " bodyLen=" .. tostring(#(body or "")))
+
     Tasks.run(
         function()
             local parseOk, doc = pcall(function()
@@ -359,20 +358,8 @@ renderBody = function(body, url, addToHistory)
                 error("Layout Error: " .. tostring(lErr))
             end
 
-            print("ZQPARSE ok reader=" .. tostring(doc.isReaderMode) .. " blocks=" .. tostring(#(doc.blocks or {})))
             Logger.log("parse ok reader=" .. tostring(doc.isReaderMode) .. " blocks=" .. tostring(#(doc.blocks or {})))
-            print("ZQITEMS " .. tostring(#(Layout.renderItems or {})))
             Logger.log("layout ok items=" .. tostring(#(Layout.renderItems or {})))
-            print("=== ZQBLOCKS start ===")
-            for i, blk in ipairs(doc.blocks or {}) do
-                local txt = ""
-                if blk.inlines then
-                    for _, inl in ipairs(blk.inlines) do txt = txt .. (inl.text or "") end
-                elseif blk.text then txt = blk.text end
-                if #txt > 90 then txt = string.sub(txt, 1, 90) .. "..." end
-                print(i .. "[" .. (blk.type or "?") .. "]" .. (blk.level and (" h"..blk.level) or "") .. " |" .. txt .. "|")
-            end
-            print("=== ZQBLOCKS end ===")
 
             return doc
         end,
@@ -390,14 +377,19 @@ renderBody = function(body, url, addToHistory)
             updateSystemMenu()
 
             -- Enqueue all images for background download
+            local imgCount = 0
             for _, blk in ipairs(currentDoc.blocks or {}) do
                 if blk.type == "image" and blk.src and blk.src ~= "" then
+                    imgCount = imgCount + 1
                     ImageDecoder.enqueue(blk.src)
                 end
             end
+            Logger.log("IMAGE enqueue: " .. imgCount .. " image blocks found")
+            Logger.log("RENDER COMPLETE: state=" .. currentState .. " title=" .. (pageTitle or ""))
         end,
         function(err)
             isRendering = false
+            Logger.log("RENDER ERROR: " .. tostring(err))
             ErrorPage.show(err, url)
             currentState = Constants.STATE_ERROR
             pageTitle    = "Render Error"
@@ -418,7 +410,6 @@ Style.init()
 HomePage.reset()
 currentBrowseMode = Storage.settings.mode or Constants.MODE_READER
 updateSystemMenu()
-pendingNavUrl = "about:home"
 
 -- ── Main Update Loop ──────────────────────────────────────────────────────────
 -- The whole frame runs inside a pcall: if any Lua error slips through, it is

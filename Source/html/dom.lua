@@ -21,11 +21,18 @@ local VOID = {
 -- NOTE: noscript is deliberately absent: scripting is disabled in this
 -- browser, so its fallback content must be parsed and rendered as markup
 -- (per the HTML spec "scripting disabled" rules).
+-- NOTE: script, style, svg, math, title are deliberately absent: the
+-- tokenizer already strips their content at the raw HTML level. If we
+-- also skip them here, the DOM builder's skipDepth mechanism gets stuck
+-- waiting for a closing tag the tokenizer never emits, silently losing
+-- ALL subsequent body content.
+-- NOTE: meta, link, base are deliberately absent: they are void elements
+-- (no closing tag ever emitted by the tokenizer). If they were in
+-- SKIP_SUBTREE, encountering one in the <body> would set skipDepth=1
+-- permanently, discarding ALL subsequent tokens.
 local SKIP_SUBTREE = {
-    script = true, style = true, svg = true, math = true,
     template = true, datalist = true, map = true, head = true,
-    title = true, meta = true, link = true, base = true, rp = true,
-    selectedcontent = true
+    rp = true, selectedcontent = true
 }
 
 -- "Block" elements that imply the end of an open <p> when they start.
@@ -152,12 +159,17 @@ function DOM.build(tokens)
     local stack = { root }
     local count = 0
 
+    -- Diagnostic counters
+    local diag = { textNodes = 0, elemNodes = 0, tokensProcessed = 0, maxNodesHit = false, skippedDepth = 0 }
+
     local function top() return stack[#stack] end
 
     local function append(node)
-        if count >= MAX_NODES then return false end
+        if count >= MAX_NODES then diag.maxNodesHit = true; return false end
         table.insert(top().children, node)
         count = count + 1
+        if node.kind == "text" then diag.textNodes = diag.textNodes + 1
+        elseif node.kind == "element" then diag.elemNodes = diag.elemNodes + 1 end
         return true
     end
 
@@ -168,11 +180,20 @@ function DOM.build(tokens)
         Tasks.yieldCheck()
         Tasks.reportProgress(0.5 + 0.3 * (i / math.max(1, #tokens)))
 
+        diag.tokensProcessed = diag.tokensProcessed + 1
         if count >= MAX_NODES then break end
 
         if skipDepth > 0 then
             if tok.type == "tag" and tok.isClosing and tok.name == skipTag then
                 skipDepth = 0
+            else
+                diag.skippedDepth = diag.skippedDepth + 1
+                -- Safety valve: if skipDepth has been stuck for 500 tokens
+                -- without finding the closing tag, force-reset to prevent
+                -- silently losing the entire page.
+                if diag.skippedDepth >= 500 then
+                    skipDepth = 0
+                end
             end
 
         elseif tok.type == "text" then
@@ -219,6 +240,7 @@ function DOM.build(tokens)
         end
     end
 
+    root._diag = diag
     return root
 end
 

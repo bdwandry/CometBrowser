@@ -2,6 +2,7 @@
 -- Uses HttpClient for sequential image downloads after page load.
 import "core/url"
 import "core/http_client"
+import "core/tasks"
 import "render/style"
 import "render/decoders/dither"
 import "render/decoders/bmp"
@@ -9,6 +10,8 @@ import "render/decoders/gif"
 import "render/decoders/png"
 import "render/decoders/svg"
 import "render/decoders/jpeg"
+import "render/decoders/ico"
+import "render/decoders/webp"
 
 ImageDecoder = {}
 local gfx = playdate.graphics
@@ -17,55 +20,87 @@ local gfx = playdate.graphics
 local imageCache     = {}
 local downloadQueue  = {}
 local isDownloading  = false
+local isDecoding     = false
 
 function ImageDecoder.clearCache()
     imageCache    = {}
     downloadQueue = {}
     isDownloading = false
+    isDecoding    = false
 end
 
-local function decodeRawImageData(data, url)
-    if not data or #data < 4 then return nil end
+-- Decode raw image bytes. JPEG is run through the cooperative task scheduler
+-- (its decode loop calls Tasks.yieldCheck()), so large photos decode across
+-- frames without stalling the run loop; onDone(imgOrNil) fires when done.
+local function decodeRawImageData(data, url, onDone)
+    if not data or #data < 4 then
+        onDone(nil)
+        return
+    end
 
     local b1, b2, b3, b4 = string.byte(data, 1, 4)
 
-    -- PNG: 0x89 P N G
-    if b1 == 0x89 and b2 == 0x50 and b3 == 0x4E and b4 == 0x47 then
-        local ok, img = pcall(function() return PNGDecoder.decode(data) end)
-        if ok and img then return img end
-    end
+    print("ZQIMG decode: bytes=" .. #data .. " b1=" .. string.format("0x%02X", b1) .. " b2=" .. string.format("0x%02X", b2) .. " b3=" .. string.format("0x%02X", b3) .. " b4=" .. string.format("0x%02X", b4))
 
-    -- GIF87a / GIF89a
-    local gifSig = string.sub(data, 1, 6)
-    if gifSig == "GIF87a" or gifSig == "GIF89a" then
-        local ok, img = pcall(function() return GIFDecoder.decode(data) end)
-        if ok and img then return img end
-    end
-
-    -- BMP: BM
-    if string.sub(data, 1, 2) == "BM" then
-        local ok, img = pcall(function() return BMPDecoder.decode(data) end)
-        if ok and img then return img end
-    end
-
-    -- JPEG: FF D8
+    -- JPEG: FF D8 (async, can take seconds for big photos)
     if b1 == 0xFF and b2 == 0xD8 then
-        local ok, img = pcall(function() return JPEGDecoder.decode(data) end)
-        if ok and img then return img end
+        isDecoding = true
+        Tasks.run(
+            function()
+                local ok, img = pcall(function() return JPEGDecoder.decode(data, 360, 200) end)
+                if not ok then error(tostring(img)) end
+                return img
+            end,
+            function(img)
+                isDecoding = false
+                onDone(img)
+            end,
+            function(err)
+                isDecoding = false
+                pcall(Logger.error, "jpeg decode: " .. tostring(err))
+                onDone(nil)
+            end
+        )
+        return
     end
 
+    local img = nil
+    local gifSig = string.sub(data, 1, 6)
+
+    -- WebP: RIFF....WEBP
+    if string.sub(data, 1, 4) == "RIFF" and string.sub(data, 9, 12) == "WEBP" then
+        local ok, r = pcall(function() return WebPDecoder.decode(data, 360, 200) end)
+        if ok and r then img = r end
+    -- PNG: 0x89 P N G
+    elseif b1 == 0x89 and b2 == 0x50 and b3 == 0x4E and b4 == 0x47 then
+        local ok, r = pcall(function() return PNGDecoder.decode(data, 360, 200) end)
+        if ok and r then img = r end
+    -- GIF87a / GIF89a
+    elseif gifSig == "GIF87a" or gifSig == "GIF89a" then
+        local ok, r = pcall(function() return GIFDecoder.decode(data, 360, 200) end)
+        if ok and r then img = r end
+    -- BMP: BM
+    elseif string.sub(data, 1, 2) == "BM" then
+        local ok, r = pcall(function() return BMPDecoder.decode(data) end)
+        if ok and r then img = r end
+    -- ICO / CUR: reserved(2)=0, type(2)=1 icon / 2 cursor
+    elseif b1 == 0 and b2 == 0 and (b3 == 1 or b3 == 2) and b4 == 0 then
+        local ok, r = pcall(function() return ICODecoder.decode(data, 360, 200) end)
+        if ok and r then img = r end
     -- SVG
-    local head = string.lower(string.sub(data, 1, 200))
-    if string.find(head, "<svg") or string.find(head, "<?xml") then
-        local ok, img = pcall(function() return SVGDecoder.decode(data) end)
-        if ok and img then return img end
+    else
+        local head = string.lower(string.sub(data, 1, 200))
+        if string.find(head, "<svg") or string.find(head, "<?xml") then
+            local ok, r = pcall(function() return SVGDecoder.decode(data, 360, 200) end)
+            if ok and r then img = r end
+        end
     end
 
-    return nil
+    onDone(img)
 end
 
 local function processNextImage()
-    if isDownloading or #downloadQueue == 0 then return end
+    if isDownloading or isDecoding or #downloadQueue == 0 then return end
 
     -- Don't download images while the main page is loading
     if HttpClient.isLoading() then return end
@@ -79,21 +114,30 @@ local function processNextImage()
 
     isDownloading = true
 
+    print("ZQIMG downloading: " .. url)
     HttpClient.get(url, {
         onSuccess = function(status, headers, body, finalUrl)
+            print("ZQIMG download OK: " .. url .. " status=" .. tostring(status) .. " bytes=" .. tostring(#(body or "")))
             if body and #body > 8 then
-                local img = decodeRawImageData(body, url)
-                imageCache[url] = img or false
+                decodeRawImageData(body, url, function(img)
+                    imageCache[url] = img or false
+                    print("ZQIMG decode result: " .. url .. " img=" .. tostring(img ~= nil))
+                    isDownloading = false
+                    playdate.timer.performAfterDelay(16, function()
+                        processNextImage()
+                    end)
+                end)
             else
+                print("ZQIMG download body too small: " .. url .. " bytes=" .. tostring(#(body or "")))
                 imageCache[url] = false
+                isDownloading = false
+                playdate.timer.performAfterDelay(16, function()
+                    processNextImage()
+                end)
             end
-            isDownloading = false
-            -- Wait one frame before next download to not starve main loop
-            playdate.timer.performAfterDelay(16, function()
-                processNextImage()
-            end)
         end,
         onError = function(err)
+            print("ZQIMG download ERROR: " .. url .. " err=" .. tostring(err))
             imageCache[url] = false
             isDownloading = false
             playdate.timer.performAfterDelay(16, function()
@@ -111,7 +155,11 @@ function ImageDecoder.update()
     if isDownloading and not HttpClient.isLoading() then
         isDownloading = false
     end
-    if not isDownloading and #downloadQueue > 0 and not HttpClient.isLoading() then
+    -- If a decode task was cancelled (navigation) its onDone never runs.
+    if isDecoding and not Tasks.isRunning() then
+        isDecoding = false
+    end
+    if not isDownloading and not isDecoding and #downloadQueue > 0 and not HttpClient.isLoading() then
         processNextImage()
     end
 end
@@ -122,6 +170,7 @@ function ImageDecoder.enqueue(src)
     for _, qu in ipairs(downloadQueue) do
         if qu == src then return end
     end
+    print("ZQIMG enqueue: " .. src)
     table.insert(downloadQueue, src)
 end
 
@@ -160,6 +209,7 @@ function ImageDecoder.draw(x, y, w, h, altText, href, isSelected, src)
             return
         elseif cached == nil then
             -- Enqueue for background download
+            print("ZQIMG cache miss, enqueueing: " .. src)
             ImageDecoder.enqueue(src)
         end
     end
@@ -197,4 +247,12 @@ function ImageDecoder.draw(x, y, w, h, altText, href, isSelected, src)
     end
 
     gfx.setImageDrawMode(gfx.kDrawModeCopy)
+end
+
+-- Test hook: run a buffer through the format dispatch and return the decoded
+-- image (or nil) synchronously. JPEG is async and is not covered by this.
+function ImageDecoder._testDecode(data)
+    local result = nil
+    decodeRawImageData(data, "test://", function(img) result = img end)
+    return result
 end

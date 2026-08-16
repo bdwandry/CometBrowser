@@ -96,7 +96,6 @@ local function decodeSymbol(bs, huff)
     return nil
 end
 
--- Fixed Huffman Tables (RFC 1951)
 local fixedLitTable = nil
 local fixedDistTable = nil
 
@@ -262,4 +261,163 @@ function Inflate.decompress(data)
         table.insert(strChunks, table.concat(sub))
     end
     return table.concat(strChunks)
+end
+
+-- Streaming inflate: decode the zlib stream incrementally, returning output
+-- in caller-sized chunks. Keeps only a 32KB LZ77 window in memory, so a large
+-- PNG can be unfiltered row-by-row without ever holding the full uncompressed
+-- image (which would blow past the Playdate's ~16MB of RAM).
+-- Usage:
+--   local s = Inflate.createStream(compressed)
+--   repeat
+--       local chunk = s:read(n)   -- up to n bytes, or nil at end
+--   until not chunk
+function Inflate.createStream(data)
+    if not data or #data < 2 then return nil end
+
+    -- Skip zlib header (CMF/FLG) if present
+    local cmf = string.byte(data, 1)
+    local flg = string.byte(data, 2)
+    local startPos = 1
+    if cmf and flg and (cmf & 0x0F) == 8 and ((cmf * 256 + flg) % 31) == 0 then
+        startPos = 3
+        if (flg & 0x20) ~= 0 then startPos = startPos + 4 end
+    end
+
+    local bs = createBitStream(string.sub(data, startPos))
+
+    local pending = {}     -- decompressed bytes not yet consumed
+    local win     = {}     -- sliding LZ77 window (relative indexes)
+    local produced = 0
+    local winStart = 0     -- absolute index of win[1]
+    local mode     = "block"   -- "block" | "uncompressed" | "huff"
+    local remaining = 0        -- bytes left in current uncompressed block
+    local litTable, distTable = nil, nil
+    local eof = false
+    local isFinalBlock = false
+
+    local function emit(b)
+        pending[#pending + 1] = b
+        win[#win + 1] = b
+        produced = produced + 1
+        if #win > 65536 then
+            win = { table.unpack(win, 32769) }
+            winStart = produced - #win
+        end
+    end
+
+    local function beginBlock()
+        local fin = bs:readBits(1)
+        local btype = bs:readBits(2)
+        if fin == nil or btype == nil then
+            eof = true
+            return false
+        end
+        isFinalBlock = fin == 1
+        if btype == 0 then
+            bs:alignByte()
+            remaining = bs:readBits(16) or 0
+            bs:readBits(16) -- N LEN
+            mode = "uncompressed"
+        elseif btype == 1 then
+            litTable, distTable = getFixedTables()
+            mode = "huff"
+        elseif btype == 2 then
+            local hlit  = (bs:readBits(5) or 0) + 257
+            local hdist = (bs:readBits(5) or 0) + 1
+            local hclen = (bs:readBits(4) or 0) + 4
+            local codeLens = {}
+            for i = 1, 19 do codeLens[i] = 0 end
+            for i = 1, hclen do
+                codeLens[clOrder[i] + 1] = bs:readBits(3) or 0
+            end
+            local clTable = buildHuffmanTable(codeLens)
+            local allLens = {}
+            while #allLens < (hlit + hdist) do
+                local sym = decodeSymbol(bs, clTable)
+                if not sym then eof = true return false end
+                if sym < 16 then
+                    table.insert(allLens, sym)
+                elseif sym == 16 then
+                    local rc = (bs:readBits(2) or 0) + 3
+                    local last = allLens[#allLens] or 0
+                    for _ = 1, rc do table.insert(allLens, last) end
+                elseif sym == 17 then
+                    local rc = (bs:readBits(3) or 0) + 3
+                    for _ = 1, rc do table.insert(allLens, 0) end
+                elseif sym == 18 then
+                    local rc = (bs:readBits(7) or 0) + 11
+                    for _ = 1, rc do table.insert(allLens, 0) end
+                end
+            end
+            local litLens, distLens = {}, {}
+            for i = 1, hlit do table.insert(litLens, allLens[i] or 0) end
+            for i = hlit + 1, hlit + hdist do table.insert(distLens, allLens[i] or 0) end
+            litTable  = buildHuffmanTable(litLens)
+            distTable = buildHuffmanTable(distLens)
+            mode = "huff"
+        end
+        return true
+    end
+
+    local function emitMatch(matchLen, matchDist)
+        for i = 0, matchLen - 1 do
+            local rel = (produced - matchDist) - winStart + 1
+            emit(win[rel] or 0)
+        end
+    end
+
+    local function pumpUntil(n)
+        while not eof and #pending < n do
+            if mode == "uncompressed" then
+                if remaining > 0 then
+                    remaining = remaining - 1
+                    local b = bs:readBits(8)
+                    if not b then eof = true break end
+                    emit(b)
+                else
+                    if isFinalBlock then eof = true break end
+                    mode = "block"
+                end
+            elseif mode == "block" then
+                beginBlock()
+            else -- "huff"
+                local sym = decodeSymbol(bs, litTable)
+                if not sym then eof = true break end
+                if sym == 256 then
+                    if isFinalBlock then eof = true break end
+                    mode = "block"
+                elseif sym < 256 then
+                    emit(sym)
+                else
+                    local baseL = lengthBase[sym] or 3
+                    local el = lengthExtra[sym] or 0
+                    local extraL = (el > 0) and (bs:readBits(el) or 0) or 0
+                    local len = baseL + extraL
+                    local distSym = decodeSymbol(bs, distTable)
+                    if not distSym then eof = true break end
+                    local baseD = distBase[distSym] or 1
+                    local ed = distExtra[distSym] or 0
+                    local extraD = (ed > 0) and (bs:readBits(ed) or 0) or 0
+                    emitMatch(len, baseD + extraD)
+                end
+            end
+        end
+    end
+
+    local stream = {}
+    function stream:read(n)
+        n = n or 1
+        pumpUntil(n)
+        if #pending == 0 then return nil end
+        local k = math.min(n, #pending)
+        local chunks = {}
+        local step = 1024
+        for a = 1, k, step do
+            chunks[#chunks + 1] = string.char(table.unpack(pending, a, math.min(k, a + step - 1)))
+        end
+        pending = { table.unpack(pending, k + 1) }
+        return table.concat(chunks)
+    end
+    return stream
 end

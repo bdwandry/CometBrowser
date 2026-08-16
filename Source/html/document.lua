@@ -304,7 +304,7 @@ function Document.parse(htmlString, baseUrl, mode)
         if w <= 0 then w = 160 end
         if h <= 0 then h = 80 end
 
-        if src ~= "" and not string.match(src, "tracking") and not string.match(src, "beacon") and not state.currentTableCell then
+        if src ~= "" and not string.match(src, "tracking") and not string.match(src, "beacon") then
             if w > 360 then w = 360 end
             if h > 180 then h = 180 end
             local imgBlock = {
@@ -991,6 +991,12 @@ function Document.parse(htmlString, baseUrl, mode)
         elseif tag == "source" or tag == "track" or tag == "col" or tag == "colgroup"
             or tag == "area" or tag == "param" or tag == "frameset" or tag == "frame" then
             -- Void / non-rendered.
+
+        elseif tag == "script" or tag == "style" or tag == "svg" or tag == "math"
+            or tag == "title" then
+            -- Non-rendered: content is stripped by the tokenizer; the DOM tree
+            -- still contains the element (for possible future CSS/JS support)
+            -- but we must not walk its children into the visible document.
 
         else
             -- Unknown element: render its children in normal flow.

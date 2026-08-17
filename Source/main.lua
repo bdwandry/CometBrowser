@@ -138,41 +138,56 @@ end
 
 local function submitForm(formAction, inputBlock)
     if not formAction or formAction == "" then
-        -- Fallback: use the current page URL as the form target
         formAction = currentUrlObj and currentUrlObj.normalized or ""
     end
     if formAction == "#" then return end
+
+    -- Track which pairs we've seen so the submit button doesn't duplicate
+    local seen = {}
     local pairs = {}
+
+    local function addPair(k, v)
+        if k and k ~= "" and not seen[k] then
+            seen[k] = true
+            table.insert(pairs, URL.encode(k) .. "=" .. URL.encode(v or ""))
+        end
+    end
+
     for _, item in ipairs(Layout.renderItems or {}) do
         if item.disabled then
             -- Disabled controls are never submitted.
+        elseif item.type == "hidden_field" and item.formAction == formAction then
+            addPair(item.name, item.value or "")
         elseif item.type == "input_field" and item.formAction == formAction then
-            if item.name and item.name ~= "" then
-                table.insert(pairs, URL.encode(item.name) .. "=" .. URL.encode(item.value or ""))
-            end
-        elseif item.type == "input_submit" and item.formAction == formAction and item.name then
-            table.insert(pairs, URL.encode(item.name) .. "=" .. URL.encode(item.value or ""))
+            addPair(item.name, item.value or "")
         elseif item.type == "checkbox_field" and item.formAction == formAction and item.checked then
-            table.insert(pairs, URL.encode(item.name or "") .. "=" .. URL.encode(item.value ~= "" and item.value or "on"))
+            addPair(item.name or "", item.value ~= "" and item.value or "on")
         elseif item.type == "select_field" and item.formAction == formAction then
             local opt = item.options and item.options[item.selectedIndex]
             if opt and not opt.disabled and not opt.group then
-                table.insert(pairs, URL.encode(item.name or "") .. "=" .. URL.encode(opt.value or opt.text or ""))
+                addPair(item.name or "", opt.value or opt.text or "")
             end
         end
     end
+
     -- If no fields matched by formAction, try collecting all visible input fields
     if #pairs == 0 then
         for _, item in ipairs(Layout.renderItems or {}) do
-            if not item.disabled and item.type == "input_field" and item.name and item.name ~= "" then
-                table.insert(pairs, URL.encode(item.name) .. "=" .. URL.encode(item.value or ""))
+            if not item.disabled then
+                if item.type == "hidden_field" and item.name and item.name ~= "" then
+                    addPair(item.name, item.value or "")
+                elseif item.type == "input_field" and item.name and item.name ~= "" then
+                    addPair(item.name, item.value or "")
+                end
             end
         end
     end
-    -- Last resort: include the submit button's own name=value
-    if #pairs == 0 and inputBlock and not inputBlock.disabled then
-        table.insert(pairs, URL.encode(inputBlock.name or "q") .. "=" .. URL.encode(inputBlock.value or ""))
+
+    -- Always include the clicked submit button's name=value (per HTML spec)
+    if inputBlock and not inputBlock.disabled and inputBlock.name and inputBlock.name ~= "" then
+        addPair(inputBlock.name, inputBlock.value or "")
     end
+
     local query = table.concat(pairs, "&")
     local sep = string.find(formAction, "?") and "&" or "?"
     local target = formAction .. (query ~= "" and (sep .. query) or "")
@@ -402,6 +417,17 @@ renderBody = function(body, url, addToHistory)
                     imgCount = imgCount + 1
                     ImageDecoder.enqueue(blk.src)
                 end
+            end
+
+            -- Auto-redirect for <meta http-equiv="refresh" content="N;url=...">
+            if currentDoc.metaRefresh and currentDoc.metaRefresh.delay then
+                local redirectUrl = currentDoc.metaRefresh.url or url
+                local redirectDelay = math.max(0, currentDoc.metaRefresh.delay) * 1000
+                playdate.timer.performAfterDelay(redirectDelay, function()
+                    if currentState == Constants.STATE_PAGE then
+                        navigateTo(redirectUrl)
+                    end
+                end)
             end
         end,
         function(err)

@@ -205,6 +205,35 @@ function Document.parse(htmlString, baseUrl, mode, opts)
         baseUrl = baseHref
     end
 
+    -- Scan <meta http-equiv="refresh" content="N;url=..."> from tokens
+    -- (same reason as <base>: <head> is pruned during tree building)
+    local metaRefresh = nil
+    for _, tok in ipairs(tokens) do
+        if tok.type == "tag" and tok.name == "meta" and not tok.isClosing then
+            local httpEquiv = tok.attrs and tok.attrs["http-equiv"]
+            if httpEquiv and string.lower(httpEquiv) == "refresh" then
+                local content = tok.attrs["content"] or ""
+                local delayStr, urlStr = string.match(content, "^(%d+%.?%d*)%s*;%s*[Uu][Rr][Ll]=%s*(.+)$")
+                if not delayStr then
+                    delayStr = string.match(content, "^(%d+%.?%d*)%s*$")
+                end
+                if delayStr then
+                    local refreshUrl = urlStr and string.match(urlStr, "^%s*(.-)%s*$") or nil
+                    if refreshUrl and refreshUrl ~= "" then
+                        refreshUrl = URL.resolve(baseUrl, refreshUrl)
+                    else
+                        refreshUrl = nil
+                    end
+                    metaRefresh = {
+                        delay = tonumber(delayStr) or 0,
+                        url = refreshUrl,
+                    }
+                    break
+                end
+            end
+        end
+    end
+
     local doc = {
         title = pageTitle,
         baseUrl = baseUrl,
@@ -282,6 +311,9 @@ function Document.parse(htmlString, baseUrl, mode, opts)
         -- MathML: linearized text fallback collected while inside <math>.
         inMath = false,
         mathParts = {},
+
+        -- Meta refresh redirect: { delay = N, url = "..." }
+        metaRefresh = nil,
     }
 
     local currentBlock = nil
@@ -926,6 +958,12 @@ function Document.parse(htmlString, baseUrl, mode, opts)
             end
 
             if inputType == "hidden" then
+                flushCurrentBlock()
+                addBlock(common({
+                    type = "hidden_field",
+                    name = inputName,
+                    value = inputVal,
+                }))
                 return
             elseif inputType == "checkbox" or inputType == "radio" then
                 flushCurrentBlock()
@@ -1336,6 +1374,29 @@ function Document.parse(htmlString, baseUrl, mode, opts)
             -- still contains the element (for possible future CSS/JS support)
             -- but we must not walk its children into the visible document.
 
+        elseif tag == "meta" then
+            local httpEquiv = attrs["http-equiv"]
+            if httpEquiv and string.lower(httpEquiv) == "refresh" then
+                local content = attrs["content"] or ""
+                -- Match: "5;url=..." or "5; url=..." (with optional decimal seconds)
+                local delayStr, urlStr = string.match(content, "^(%d+%.?%d*)%s*;%s*[Uu][Rr][Ll]=%s*(.+)$")
+                if not delayStr then
+                    delayStr = string.match(content, "^(%d+%.?%d*)%s*$")
+                end
+                if delayStr then
+                    local refreshUrl = urlStr and string.match(urlStr, "^%s*(.-)%s*$") or nil
+                    if refreshUrl and refreshUrl ~= "" then
+                        refreshUrl = URL.resolve(baseUrl, refreshUrl)
+                    else
+                        refreshUrl = nil
+                    end
+                    state.metaRefresh = {
+                        delay = tonumber(delayStr) or 0,
+                        url = refreshUrl,
+                    }
+                end
+            end
+
         else
             -- Unknown element: render its children in normal flow.
             walkChildren(node)
@@ -1420,6 +1481,8 @@ function Document.parse(htmlString, baseUrl, mode, opts)
             inlines = { { type = "text", text = "(Empty Web Page)", bold = false, italic = true } }
         })
     end
+
+    doc.metaRefresh = state.metaRefresh or metaRefresh
 
     return doc
 end

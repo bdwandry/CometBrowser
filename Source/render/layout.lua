@@ -541,6 +541,16 @@ function Layout.build(doc)
             })
             currentY = currentY + tableH + 10
 
+        -- 8a. Hidden fields (no visual, just stored for form submission)
+        elseif block.type == "hidden_field" then
+            table.insert(Layout.renderItems, {
+                type = "hidden_field",
+                name = block.name,
+                value = block.value,
+                formAction = block.formAction or "",
+                disabled = block.disabled,
+            })
+
         -- 9. Text Input Fields
         elseif block.type == "input_field" then
             local fieldH = 22

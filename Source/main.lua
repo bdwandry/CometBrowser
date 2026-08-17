@@ -74,6 +74,7 @@ local bHoldActive       = false
 local bHoldUsedDir      = false
 local bHoldStartMs      = 0
 local bNotPressedFrames = 0
+local navigatingHistory = false  -- true while goBack/goForward drives navigateTo
 
 -- ── Helpers ───────────────────────────────────────────────────────────────────
 local function pushHistory(urlString)
@@ -97,6 +98,7 @@ end
 local function goBack()
     if historyIndex > 1 then
         historyIndex = historyIndex - 1
+        navigatingHistory = true
         return navHistory[historyIndex]
     end
     return nil
@@ -105,6 +107,7 @@ end
 local function goForward()
     if historyIndex < #navHistory then
         historyIndex = historyIndex + 1
+        navigatingHistory = true
         return navHistory[historyIndex]
     end
     return nil
@@ -273,7 +276,7 @@ runNavigation = function(urlString)
         currentState  = Constants.STATE_HOME
         currentUrlObj = URL.parse("about:home")
         pageTitle     = "CometBrowser Start Page"
-        pushHistory("about:home")
+        if not navigatingHistory then pushHistory("about:home") end
         scrollY = 0
         targetScrollY = 0
         crankVelocity = 0
@@ -295,7 +298,8 @@ runNavigation = function(urlString)
     progressCurrent = 0
     progressTotal   = 0
     pageTitle       = "Loading..."
-    pushHistory(urlString)
+    if not navigatingHistory then pushHistory(urlString) end
+    navigatingHistory = false
     updateSystemMenu()
 
     HttpClient.get(urlString, {
@@ -552,7 +556,7 @@ local function updateFrame()
             bNotPressedFrames = bNotPressedFrames + 1
         end
 
-        if playdate.buttonJustPressed(playdate.kButtonB) and not AddressBar.isOpen and not bHoldActive then
+        if playdate.buttonJustPressed(playdate.kButtonB) and not AddressBar.isOpen and not keyboardOpen and not bHoldActive then
             bHoldActive = true
             bHoldUsedDir = false
             bHoldStartMs = nowMs
@@ -576,7 +580,7 @@ local function updateFrame()
             end
         end
         if bHoldActive and bNotPressedFrames >= 4 then
-            if not bHoldUsedDir and not AddressBar.isOpen then
+            if not bHoldUsedDir and not AddressBar.isOpen and not keyboardOpen then
                 if currentState == Constants.STATE_HOME then
                     AddressBar.open("", function(newUrl) navigateTo(newUrl) end)
                     AddressBar.launchKeyboard()
@@ -594,11 +598,12 @@ local function updateFrame()
         bHoldActive = false
     end
 
+    -- Decrement skipInputFrames unconditionally so it ticks down in every state
+    if skipInputFrames > 0 then skipInputFrames = skipInputFrames - 1 end
+
     -- ── HOME STATE ────────────────────────────────────────────────────────────
     if currentState == Constants.STATE_HOME then
-        if skipInputFrames > 0 then
-            skipInputFrames = skipInputFrames - 1
-        elseif not AddressBar.isOpen then
+        if skipInputFrames <= 0 and not AddressBar.isOpen and not keyboardOpen then
             local selUrl = HomePage.handleInput()
             if selUrl then navigateTo(selUrl) end
         end
@@ -610,7 +615,7 @@ local function updateFrame()
         local maxScroll = math.max(0, totalH - Constants.CONTENT_HEIGHT)
         local isHtmlMode = (currentBrowseMode == Constants.MODE_RAW_HTML)
 
-        if not keyboardOpen and not AddressBar.isOpen then
+        if skipInputFrames <= 0 and not keyboardOpen and not AddressBar.isOpen then
             -- ── READER MODE: crank scrolls up/down, D-Pad navigates links ──────
             if not isHtmlMode then
                 targetScrollY = targetScrollY + crankVelocity

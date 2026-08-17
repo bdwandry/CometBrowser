@@ -69,6 +69,12 @@ local activeInputField   = nil
 local keyboardOpen       = false
 skipInputFrames          = 0   -- after keyboard closes, skip input for 1 frame
 
+-- B button hold state: defer keyboard to release, allow B+Left/Right history
+local bHoldActive       = false
+local bHoldUsedDir      = false
+local bHoldStartMs      = 0
+local bNotPressedFrames = 0
+
 -- ── Helpers ───────────────────────────────────────────────────────────────────
 local function pushHistory(urlString)
     -- If we navigate somewhere new, clear future history
@@ -525,6 +531,69 @@ local function updateFrame()
     playdate.timer.updateTimers()
     Tasks.update()
 
+    -- Reset B hold state when not in a page-browsing state (loading, error, etc.)
+    if currentState ~= Constants.STATE_HOME and currentState ~= Constants.STATE_PAGE then
+        bHoldActive = false
+    end
+
+    -- ── B BUTTON HOLD STATE MACHINE ──────────────────────────────────────────
+    -- On B press: start tracking.  While B held: Left/Right navigate history.
+    -- On B release (no direction used): open address bar + keyboard.
+    -- Requires 4 consecutive frames of B-not-pressed before treating as a real
+    -- release, preventing simulator key-repeat flickers from opening the
+    -- keyboard while the user is still physically holding B.
+    if currentState == Constants.STATE_HOME or currentState == Constants.STATE_PAGE then
+        local bDown = playdate.buttonIsPressed(playdate.kButtonB)
+        local nowMs = playdate.getCurrentTimeMilliseconds()
+
+        if bDown then
+            bNotPressedFrames = 0
+        else
+            bNotPressedFrames = bNotPressedFrames + 1
+        end
+
+        if playdate.buttonJustPressed(playdate.kButtonB) and not AddressBar.isOpen and not bHoldActive then
+            bHoldActive = true
+            bHoldUsedDir = false
+            bHoldStartMs = nowMs
+            bNotPressedFrames = 0
+        end
+        if bHoldActive and bDown then
+            if not AddressBar.isOpen and not keyboardOpen then
+                if playdate.buttonIsPressed(playdate.kButtonLeft) then
+                    if not bHoldUsedDir then
+                        local prev = goBack()
+                        navigateTo(prev or "about:home")
+                    end
+                    bHoldUsedDir = true
+                elseif playdate.buttonIsPressed(playdate.kButtonRight) then
+                    if not bHoldUsedDir then
+                        local fwd = goForward()
+                        if fwd then navigateTo(fwd) end
+                    end
+                    bHoldUsedDir = true
+                end
+            end
+        end
+        if bHoldActive and bNotPressedFrames >= 4 then
+            if not bHoldUsedDir and not AddressBar.isOpen then
+                if currentState == Constants.STATE_HOME then
+                    AddressBar.open("", function(newUrl) navigateTo(newUrl) end)
+                    AddressBar.launchKeyboard()
+                else
+                    local curUrlStr = currentUrlObj and currentUrlObj.normalized or ""
+                    AddressBar.open(curUrlStr, function(newUrl) navigateTo(newUrl) end)
+                    AddressBar.launchKeyboard()
+                end
+            end
+            bHoldActive = false
+            bNotPressedFrames = 0
+        end
+    else
+        bNotPressedFrames = 0
+        bHoldActive = false
+    end
+
     -- ── HOME STATE ────────────────────────────────────────────────────────────
     if currentState == Constants.STATE_HOME then
         if skipInputFrames > 0 then
@@ -534,11 +603,6 @@ local function updateFrame()
             if selUrl then navigateTo(selUrl) end
         end
         HomePage.draw(crankChange)
-
-        if playdate.buttonJustPressed(playdate.kButtonB) and not AddressBar.isOpen then
-            AddressBar.open("", function(newUrl) navigateTo(newUrl) end)
-            AddressBar.launchKeyboard()
-        end
 
     -- ── PAGE STATE ────────────────────────────────────────────────────────────
     elseif currentState == Constants.STATE_PAGE then
@@ -603,13 +667,6 @@ local function updateFrame()
                     end
                 end
 
-                -- (B) = Address Bar
-                if playdate.buttonJustPressed(playdate.kButtonB) and not AddressBar.isOpen then
-                    local curUrlStr = currentUrlObj and currentUrlObj.normalized or ""
-                    AddressBar.open(curUrlStr, function(newUrl) navigateTo(newUrl) end)
-                    AddressBar.launchKeyboard()
-                end
-
             -- ── HTML MODE: Virtual Mouse Cursor ──────────────────────────────
             else
                 -- Move cursor with D-Pad
@@ -624,51 +681,45 @@ local function updateFrame()
                         if fwd then navigateTo(fwd) end
                     end
                 else
-                    local dpadHeld = false
-                    if playdate.buttonIsPressed(playdate.kButtonLeft) then
-                        mouseX = math.max(2, mouseX - mouseSpeed)
-                        moved = true
-                        dpadHeld = true
-                    end
-                    if playdate.buttonIsPressed(playdate.kButtonRight) then
-                        mouseX = math.min(Constants.SCREEN_WIDTH - 2, mouseX + mouseSpeed)
-                        moved = true
-                        dpadHeld = true
-                    end
-                    if playdate.buttonIsPressed(playdate.kButtonUp) then
-                        mouseY = math.max(Constants.CONTENT_Y + 2, mouseY - mouseSpeed)
-                        moved = true
-                        dpadHeld = true
-                    end
-                    if playdate.buttonIsPressed(playdate.kButtonDown) then
-                        mouseY = math.min(Constants.SCREEN_HEIGHT - 2, mouseY + mouseSpeed)
-                        moved = true
-                        dpadHeld = true
-                    end
-
-                    if dpadHeld then
-                        -- D-pad held: crank moves cursor, edge-zone scrolls
-                        if crankChange ~= 0 then
-                            mouseY = math.max(Constants.CONTENT_Y + 2, math.min(Constants.SCREEN_HEIGHT - 2, mouseY + crankChange * 0.5))
+                    -- Suppress mouse movement while B is held for history navigation
+                    if not bHoldActive then
+                        local dpadHeld = false
+                        if playdate.buttonIsPressed(playdate.kButtonLeft) then
+                            mouseX = math.max(2, mouseX - mouseSpeed)
+                            moved = true
+                            dpadHeld = true
                         end
-                        local SCROLL_ZONE = 20
-                        if mouseY <= Constants.CONTENT_Y + SCROLL_ZONE then
-                            local strength = (SCROLL_ZONE - (mouseY - Constants.CONTENT_Y)) / SCROLL_ZONE
-                            targetScrollY = targetScrollY - 3 * (1 + strength * 3)
-                        elseif mouseY >= Constants.SCREEN_HEIGHT - SCROLL_ZONE then
-                            local strength = (SCROLL_ZONE - (Constants.SCREEN_HEIGHT - mouseY)) / SCROLL_ZONE
-                            targetScrollY = targetScrollY + 3 * (1 + strength * 3)
+                        if playdate.buttonIsPressed(playdate.kButtonRight) then
+                            mouseX = math.min(Constants.SCREEN_WIDTH - 2, mouseX + mouseSpeed)
+                            moved = true
+                            dpadHeld = true
                         end
-                    else
-                        -- No D-pad: crank scrolls page like Reader mode, mouse stays put
-                        targetScrollY = targetScrollY + crankVelocity
-                    end
+                        if playdate.buttonIsPressed(playdate.kButtonUp) then
+                            mouseY = math.max(Constants.CONTENT_Y + 2, mouseY - mouseSpeed)
+                            moved = true
+                            dpadHeld = true
+                        end
+                        if playdate.buttonIsPressed(playdate.kButtonDown) then
+                            mouseY = math.min(Constants.SCREEN_HEIGHT - 2, mouseY + mouseSpeed)
+                            moved = true
+                            dpadHeld = true
+                        end
 
-                    -- (B) = Right Click: open Address Bar (context action)
-                    if playdate.buttonJustPressed(playdate.kButtonB) and not AddressBar.isOpen then
-                        local curUrlStr = currentUrlObj and currentUrlObj.normalized or ""
-                        AddressBar.open(curUrlStr, function(newUrl) navigateTo(newUrl) end)
-                        AddressBar.launchKeyboard()
+                        if dpadHeld then
+                            if crankChange ~= 0 then
+                                mouseY = math.max(Constants.CONTENT_Y + 2, math.min(Constants.SCREEN_HEIGHT - 2, mouseY + crankChange * 0.5))
+                            end
+                            local SCROLL_ZONE = 20
+                            if mouseY <= Constants.CONTENT_Y + SCROLL_ZONE then
+                                local strength = (SCROLL_ZONE - (mouseY - Constants.CONTENT_Y)) / SCROLL_ZONE
+                                targetScrollY = targetScrollY - 3 * (1 + strength * 3)
+                            elseif mouseY >= Constants.SCREEN_HEIGHT - SCROLL_ZONE then
+                                local strength = (SCROLL_ZONE - (Constants.SCREEN_HEIGHT - mouseY)) / SCROLL_ZONE
+                                targetScrollY = targetScrollY + 3 * (1 + strength * 3)
+                            end
+                        else
+                            targetScrollY = targetScrollY + crankVelocity
+                        end
                     end
                 end
             end

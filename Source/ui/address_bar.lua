@@ -29,6 +29,8 @@ end
 
 function AddressBar.launchKeyboard()
     if not AddressBar.isOpen or AddressBar.keyboardShown then return end
+    -- Don't show keyboard while B is held (lets B+Left/Right work first)
+    if playdate.buttonIsPressed(playdate.kButtonB) then return end
     AddressBar.keyboardShown = true
 
     playdate.keyboard.keyboardWillHideCallback = function(submitted)

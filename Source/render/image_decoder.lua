@@ -113,7 +113,11 @@ local function decodeRawImageData(data, url, onDone)
         local head = string.lower(string.sub(data, 1, 200))
         if string.find(head, "<svg") or string.find(head, "<?xml") then
             local ok, r = pcall(function() return SVGDecoder.decode(data, 360, 200) end)
-            if ok and r then img = r end
+            if ok and r then
+                img = r
+            elseif not ok then
+                pcall(Logger.error, "svg decode: " .. tostring(r))
+            end
         end
     end
 

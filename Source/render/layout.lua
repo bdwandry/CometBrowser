@@ -586,8 +586,10 @@ function Layout.build(doc)
 
         -- 10. Submit Buttons
         elseif block.type == "input_submit" then
-            local btnH = 22
-            local btnW = 100
+            local btnH = 24
+            local btnFont = Style.fontBodyBold or gfx.getFont()
+            local tw = Style.getTextWidth(btnFont, block.label or "Submit")
+            local btnW = math.max(50, math.min(maxWidth, tw + 24))
             local item = {
                 type = "input_submit",
                 x = marginX,

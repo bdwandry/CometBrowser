@@ -137,7 +137,11 @@ local function openKeyboardForInput(inputBlock)
 end
 
 local function submitForm(formAction, inputBlock)
-    if not formAction or formAction == "" or formAction == "#" then return end
+    if not formAction or formAction == "" then
+        -- Fallback: use the current page URL as the form target
+        formAction = currentUrlObj and currentUrlObj.normalized or ""
+    end
+    if formAction == "#" then return end
     local pairs = {}
     for _, item in ipairs(Layout.renderItems or {}) do
         if item.disabled then
@@ -157,6 +161,15 @@ local function submitForm(formAction, inputBlock)
             end
         end
     end
+    -- If no fields matched by formAction, try collecting all visible input fields
+    if #pairs == 0 then
+        for _, item in ipairs(Layout.renderItems or {}) do
+            if not item.disabled and item.type == "input_field" and item.name and item.name ~= "" then
+                table.insert(pairs, URL.encode(item.name) .. "=" .. URL.encode(item.value or ""))
+            end
+        end
+    end
+    -- Last resort: include the submit button's own name=value
     if #pairs == 0 and inputBlock and not inputBlock.disabled then
         table.insert(pairs, URL.encode(inputBlock.name or "q") .. "=" .. URL.encode(inputBlock.value or ""))
     end

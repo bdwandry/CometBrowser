@@ -35,7 +35,7 @@ Constants.SEARCH_ENGINES = {
 
 -- Default Start Page Speed Dials
 Constants.DEFAULT_BOOKMARKS = {
-    { title = "Bryan Wandrych", url = "https://bryanwandrych.com", desc = "Personal site & portfolio" },
+    { title = "Google", url = "https://google.com", desc = "Search engine" },
     { title = "Playdate Developer", url = "https://play.date/dev", desc = "Documentation & SDK" },
     { title = "Hacker News", url = "https://news.ycombinator.com", desc = "Tech news & discussion" },
     { title = "Wikipedia", url = "https://en.wikipedia.org/wiki/Main_Page", desc = "Free encyclopedia" },

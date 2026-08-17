@@ -787,6 +787,7 @@ function Layout.draw(scrollY)
 
     local selLink = LinkManager.getSelectedLink()
 
+    local ok, drawErr = pcall(function()
     for _, item in ipairs(Layout.renderItems) do
         if item.type == "text" then
             local drawY = item.y - scrollY
@@ -1174,7 +1175,14 @@ function Layout.draw(scrollY)
     -- Draw selected link outline
     LinkManager.drawSelectedHighlight(scrollY)
 
+    end) -- end pcall around renderItems loop
+
     gfx.popContext()
+    gfx.clearClipRect()
+
+    if not ok then
+        Logger.error("Layout.draw: " .. tostring(drawErr))
+    end
 
     -- Scrollbar
     local maxScroll = math.max(0, Layout.totalHeight - Constants.CONTENT_HEIGHT)

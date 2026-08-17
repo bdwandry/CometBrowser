@@ -117,6 +117,8 @@ local function openKeyboardForInput(inputBlock)
     if not inputBlock then return end
     activeInputField = inputBlock
     keyboardOpen = true
+    playdate.keyboard.keyboardWillHideCallback = nil
+    playdate.keyboard.textChangedCallback = nil
     playdate.keyboard.show(inputBlock.value or "")
 
     playdate.keyboard.keyboardDidHideCallback = function()
@@ -741,28 +743,6 @@ local function updateFrame()
 
         Layout.draw(scrollY)
 
-        -- Draw mouse cursor in HTML mode
-        if isHtmlMode then
-            local mx = mouseX
-            local my = mouseY
-            -- Arrow cursor (fill black triangle outline in white then black)
-            gfx.setColor(gfx.kColorWhite)
-            gfx.fillTriangle(mx, my, mx + 10, my + 4, mx + 4, my + 10)
-            gfx.setColor(gfx.kColorBlack)
-            gfx.drawTriangle(mx, my, mx + 10, my + 4, mx + 4, my + 10)
-            gfx.drawLine(mx, my, mx + 4, my + 10)
-
-            -- Highlight hovered link
-            local hovLink = LinkManager.getHoveredLink(mouseX, mouseY + scrollY)
-            if hovLink and hovLink.primaryRect then
-                local r = hovLink.primaryRect
-                gfx.setColor(gfx.kColorBlack)
-                gfx.setLineWidth(1)
-                gfx.drawRect(r.x - 1, r.y - scrollY - 1, (r.w or 60) + 2, (r.h or 14) + 2)
-                gfx.setLineWidth(1)
-            end
-        end
-
         Hud.draw(scrollY, Layout.totalHeight, LinkManager.getSelectedLink())
 
     -- ── LOADING STATE ─────────────────────────────────────────────────────────
@@ -850,8 +830,25 @@ local function updateFrame()
     end
 
     local isReader = (currentBrowseMode == Constants.MODE_READER)
+    gfx.clearClipRect()
+    gfx.setImageDrawMode(gfx.kDrawModeCopy)
     Chrome.draw(currentUrlObj, pageTitle, currentState == Constants.STATE_LOADING, progressCurrent, progressTotal, isReader)
     AddressBar.drawOverlay()
+
+    -- Draw mouse cursor as the very last thing so nothing can draw over it
+    if currentState == Constants.STATE_PAGE and currentBrowseMode == Constants.MODE_RAW_HTML then
+        gfx.pushContext()
+        gfx.clearClipRect()
+        gfx.setImageDrawMode(gfx.kDrawModeCopy)
+        local mx = mouseX
+        local my = mouseY
+        gfx.setColor(gfx.kColorWhite)
+        gfx.fillTriangle(mx, my, mx + 10, my + 4, mx + 4, my + 10)
+        gfx.setColor(gfx.kColorBlack)
+        gfx.drawTriangle(mx, my, mx + 10, my + 4, mx + 4, my + 10)
+        gfx.drawLine(mx, my, mx + 4, my + 10)
+        gfx.popContext()
+    end
 end
 
 function playdate.update()

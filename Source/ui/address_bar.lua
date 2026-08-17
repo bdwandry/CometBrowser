@@ -33,6 +33,9 @@ function AddressBar.launchKeyboard()
     if playdate.buttonIsPressed(playdate.kButtonB) then return end
     AddressBar.keyboardShown = true
 
+    playdate.keyboard.keyboardDidHideCallback = nil
+    playdate.keyboard.textChangedCallback = nil
+
     playdate.keyboard.keyboardWillHideCallback = function(submitted)
         if submitted then
             local text = playdate.keyboard.text or ""

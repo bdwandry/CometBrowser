@@ -624,36 +624,44 @@ local function updateFrame()
                         if fwd then navigateTo(fwd) end
                     end
                 else
+                    local dpadHeld = false
                     if playdate.buttonIsPressed(playdate.kButtonLeft) then
                         mouseX = math.max(2, mouseX - mouseSpeed)
                         moved = true
+                        dpadHeld = true
                     end
                     if playdate.buttonIsPressed(playdate.kButtonRight) then
                         mouseX = math.min(Constants.SCREEN_WIDTH - 2, mouseX + mouseSpeed)
                         moved = true
+                        dpadHeld = true
                     end
                     if playdate.buttonIsPressed(playdate.kButtonUp) then
                         mouseY = math.max(Constants.CONTENT_Y + 2, mouseY - mouseSpeed)
                         moved = true
+                        dpadHeld = true
                     end
                     if playdate.buttonIsPressed(playdate.kButtonDown) then
                         mouseY = math.min(Constants.SCREEN_HEIGHT - 2, mouseY + mouseSpeed)
                         moved = true
+                        dpadHeld = true
                     end
 
-                    -- Crank also moves cursor up/down (tilting)
-                    if crankChange ~= 0 then
-                        mouseY = math.max(Constants.CONTENT_Y + 2, math.min(Constants.SCREEN_HEIGHT - 2, mouseY + crankChange * 0.5))
-                    end
-
-                    -- Auto-scroll: if cursor near top or bottom edge, scroll
-                    local SCROLL_ZONE = 20
-                    if mouseY <= Constants.CONTENT_Y + SCROLL_ZONE then
-                        local strength = (SCROLL_ZONE - (mouseY - Constants.CONTENT_Y)) / SCROLL_ZONE
-                        targetScrollY = targetScrollY - 3 * (1 + strength * 3)
-                    elseif mouseY >= Constants.SCREEN_HEIGHT - SCROLL_ZONE then
-                        local strength = (SCROLL_ZONE - (Constants.SCREEN_HEIGHT - mouseY)) / SCROLL_ZONE
-                        targetScrollY = targetScrollY + 3 * (1 + strength * 3)
+                    if dpadHeld then
+                        -- D-pad held: crank moves cursor, edge-zone scrolls
+                        if crankChange ~= 0 then
+                            mouseY = math.max(Constants.CONTENT_Y + 2, math.min(Constants.SCREEN_HEIGHT - 2, mouseY + crankChange * 0.5))
+                        end
+                        local SCROLL_ZONE = 20
+                        if mouseY <= Constants.CONTENT_Y + SCROLL_ZONE then
+                            local strength = (SCROLL_ZONE - (mouseY - Constants.CONTENT_Y)) / SCROLL_ZONE
+                            targetScrollY = targetScrollY - 3 * (1 + strength * 3)
+                        elseif mouseY >= Constants.SCREEN_HEIGHT - SCROLL_ZONE then
+                            local strength = (SCROLL_ZONE - (Constants.SCREEN_HEIGHT - mouseY)) / SCROLL_ZONE
+                            targetScrollY = targetScrollY + 3 * (1 + strength * 3)
+                        end
+                    else
+                        -- No D-pad: crank scrolls page like Reader mode, mouse stays put
+                        targetScrollY = targetScrollY + crankVelocity
                     end
 
                     -- (B) = Right Click: open Address Bar (context action)

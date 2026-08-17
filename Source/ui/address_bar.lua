@@ -47,6 +47,7 @@ function AddressBar.launchKeyboard()
                 
                 AddressBar.isOpen = false
                 AddressBar.keyboardShown = false
+                skipInputFrames = 2
                 if AddressBar.onSubmitCallback then
                     AddressBar.onSubmitCallback(finalUrl)
                 end
@@ -55,6 +56,7 @@ function AddressBar.launchKeyboard()
         end
         AddressBar.isOpen = false
         AddressBar.keyboardShown = false
+        skipInputFrames = 2
     end
 
     playdate.keyboard.textChangedCallback = function()
@@ -75,21 +77,64 @@ end
 function AddressBar.drawOverlay()
     if not AddressBar.isOpen then return end
 
+    local boxX, boxY, boxW, boxH
+    if AddressBar.keyboardShown then
+        boxX = 4
+        boxY = 4
+        boxW = 192
+        boxH = Constants.SCREEN_HEIGHT - 8
+    else
+        boxX = 10
+        boxY = 6
+        boxW = Constants.SCREEN_WIDTH - 20
+        boxH = 48
+    end
+
     gfx.setColor(gfx.kColorWhite)
-    gfx.fillRoundRect(10, 6, Constants.SCREEN_WIDTH - 20, 48, 6)
+    gfx.fillRoundRect(boxX, boxY, boxW, boxH, 6)
     gfx.setColor(gfx.kColorBlack)
-    gfx.drawRoundRect(10, 6, Constants.SCREEN_WIDTH - 20, 48, 6)
-    gfx.drawRoundRect(12, 8, Constants.SCREEN_WIDTH - 24, 44, 4)
+    gfx.drawRoundRect(boxX, boxY, boxW, boxH, 6)
+
+    -- Clip to box interior
+    gfx.pushContext()
+    gfx.setClipRect(boxX + 2, boxY + 2, boxW - 4, boxH - 4)
+
+    local innerX = boxX + 10
+    local innerY = boxY + 10
+    local innerW = boxW - 20
 
     local font = Style.fontBodyBold or gfx.getFont()
     gfx.setFont(font)
-    gfx.drawText("Enter Web URL or Search Query:", 20, 12)
+    gfx.drawText("Enter URL or Search:", innerX, innerY)
 
     local txt = AddressBar.inputText or ""
-    if #txt > 40 then
-        txt = "..." .. string.sub(txt, -37)
+    local monoFont = Style.fontMono or font
+    gfx.setFont(monoFont)
+
+    if AddressBar.keyboardShown then
+        -- Wrap text to fill the box vertically
+        local lineY = innerY + 22
+        local lineHeight = 14
+        local line = ""
+        for i = 1, #txt do
+            local ch = string.sub(txt, i, i)
+            local testLine = line .. ch
+            local tw = Style.getTextWidth(monoFont, testLine)
+            if tw > innerW and #line > 0 then
+                monoFont:drawText(line, innerX, lineY)
+                lineY = lineY + lineHeight
+                line = ch
+                if lineY > boxY + boxH - 14 then break end
+            else
+                line = testLine
+            end
+        end
+        if line ~= "" and lineY <= boxY + boxH - 14 then
+            monoFont:drawText(line, innerX, lineY)
+        end
+    else
+        monoFont:drawText(txt, innerX, innerY + 22)
     end
-    
-    gfx.setFont(Style.fontMono or font)
-    gfx.drawText(txt, 20, 30)
+
+    gfx.popContext()
 end

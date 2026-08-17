@@ -67,7 +67,7 @@ local mouseSpeed         = 4
 -- Form input state
 local activeInputField   = nil
 local keyboardOpen       = false
-local addressBarKeyboardArmed = false
+skipInputFrames          = 0   -- after keyboard closes, skip input for 1 frame
 
 -- ── Helpers ───────────────────────────────────────────────────────────────────
 local function pushHistory(urlString)
@@ -112,6 +112,7 @@ local function openKeyboardForInput(inputBlock)
 
     playdate.keyboard.keyboardDidHideCallback = function()
         keyboardOpen = false
+        skipInputFrames = 2
         local entered = playdate.keyboard.text or ""
         if activeInputField then
             if activeInputField.maxlength and #entered > activeInputField.maxlength then
@@ -465,9 +466,25 @@ updateSystemMenu()
 -- The whole frame runs inside a pcall: if any Lua error slips through, it is
 -- written to the crash log and the frame is skipped instead of killing the app.
 local lastFrameErrAt = 0
+local lastFrameAtMs = 0
 
 local function updateFrame()
     gfx.clear()
+
+    -- Detect system menu close: if >500ms gap between frames, the system menu
+    -- was open. Close keyboard/address bar so they don't linger.
+    local nowMs = playdate.getCurrentTimeMilliseconds()
+    if lastFrameAtMs > 0 and (nowMs - lastFrameAtMs) > 500 then
+        if keyboardOpen then
+            playdate.keyboard.hide()
+            keyboardOpen = false
+        end
+        if AddressBar.isOpen then
+            AddressBar.cancel()
+        end
+        skipInputFrames = 2
+    end
+    lastFrameAtMs = nowMs
 
     -- Live-sync on-screen keyboard text into the focused input field
     if keyboardOpen and activeInputField then
@@ -508,28 +525,11 @@ local function updateFrame()
     playdate.timer.updateTimers()
     Tasks.update()
 
-    -- Deferred address-bar keyboard: opens the on-screen keyboard on B release,
-    -- but if Left/Right is pressed instead, cancel it and navigate back/forward.
-    if addressBarKeyboardArmed and AddressBar.isOpen then
-        if playdate.buttonJustReleased(playdate.kButtonB) then
-            addressBarKeyboardArmed = false
-            AddressBar.launchKeyboard()
-        elseif playdate.buttonJustPressed(playdate.kButtonLeft) or playdate.buttonJustPressed(playdate.kButtonRight) then
-            addressBarKeyboardArmed = false
-            AddressBar.cancel()
-            if playdate.buttonJustPressed(playdate.kButtonLeft) then
-                local prev = goBack()
-                if prev then navigateTo(prev) end
-            else
-                local fwd = goForward()
-                if fwd then navigateTo(fwd) end
-            end
-        end
-    end
-
     -- ── HOME STATE ────────────────────────────────────────────────────────────
     if currentState == Constants.STATE_HOME then
-        if not AddressBar.isOpen then
+        if skipInputFrames > 0 then
+            skipInputFrames = skipInputFrames - 1
+        elseif not AddressBar.isOpen then
             local selUrl = HomePage.handleInput()
             if selUrl then navigateTo(selUrl) end
         end
@@ -537,7 +537,7 @@ local function updateFrame()
 
         if playdate.buttonJustPressed(playdate.kButtonB) and not AddressBar.isOpen then
             AddressBar.open("", function(newUrl) navigateTo(newUrl) end)
-            addressBarKeyboardArmed = true
+            AddressBar.launchKeyboard()
         end
 
     -- ── PAGE STATE ────────────────────────────────────────────────────────────
@@ -607,7 +607,7 @@ local function updateFrame()
                 if playdate.buttonJustPressed(playdate.kButtonB) and not AddressBar.isOpen then
                     local curUrlStr = currentUrlObj and currentUrlObj.normalized or ""
                     AddressBar.open(curUrlStr, function(newUrl) navigateTo(newUrl) end)
-                    addressBarKeyboardArmed = true
+                    AddressBar.launchKeyboard()
                 end
 
             -- ── HTML MODE: Virtual Mouse Cursor ──────────────────────────────
@@ -668,7 +668,7 @@ local function updateFrame()
                     if playdate.buttonJustPressed(playdate.kButtonB) and not AddressBar.isOpen then
                         local curUrlStr = currentUrlObj and currentUrlObj.normalized or ""
                         AddressBar.open(curUrlStr, function(newUrl) navigateTo(newUrl) end)
-                        addressBarKeyboardArmed = true
+                        AddressBar.launchKeyboard()
                     end
                 end
             end

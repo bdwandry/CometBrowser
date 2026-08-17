@@ -159,14 +159,14 @@ function HomePage.draw(crankChange)
 
     -- Address bar prompt pill
     gfx.setColor(gfx.kColorBlack)
-    gfx.fillRoundRect(20, startY + 50, Constants.SCREEN_WIDTH - 40, 24, 4)
+    gfx.fillRoundRect(20, startY + 56, Constants.SCREEN_WIDTH - 40, 24, 4)
     gfx.setImageDrawMode(gfx.kDrawModeFillWhite)
     gfx.setFont(fontBold)
-    gfx.drawText("Press (B) to Type URL or Search Web", 32, startY + 54)
+    gfx.drawText("Press (B) to Type URL or Search Web", 32, startY + 60)
     gfx.setImageDrawMode(gfx.kDrawModeCopy)
 
     -- Speed Dial Section Title
-    local gridStartY = startY + 86
+    local gridStartY = startY + 92
     gfx.setColor(gfx.kColorBlack)
     gfx.setFont(fontBold)
     gfx.drawText("SPEED DIAL / BOOKMARKS", 20, gridStartY)

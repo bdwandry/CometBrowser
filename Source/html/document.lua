@@ -5,6 +5,7 @@ import "html/tokenizer"
 import "html/entities"
 import "html/readability"
 import "html/dom"
+import "render/decoders/svg"
 
 Document = {}
 
@@ -32,6 +33,87 @@ local function parseAlign(attrs)
     return nil
 end
 
+-- CSS-driven visibility: hidden attribute, popover attribute, and the
+-- style declarations display:none / visibility:hidden all suppress the
+-- element AND its entire subtree.
+local function isDisplayNone(attrs)
+    if not attrs then return false end
+    if attrs["hidden"] ~= nil then return true end
+    if attrs["popover"] ~= nil then return true end
+    local st = parseStyle(attrs["style"])
+    local d = st["display"]
+    if d and string.match(d, "none") then return true end
+    local v = st["visibility"]
+    if v and string.match(v, "hidden") then return true end
+    return false
+end
+
+-- CSS-driven text inversion (1-bit approximation of color:white /
+-- background-color:black). Returns true when text should render inverted.
+local function isInvertedStyle(attrs)
+    if not attrs then return false end
+    local st = parseStyle(attrs["style"])
+    local c = st["color"]
+    local bg = st["background-color"] or st["background"]
+    if c and (string.match(c, "white") or string.match(c, "%#fff") or string.match(c, "%#FFFF%w*")) then
+        return true
+    end
+    if bg and (string.match(bg, "black") or string.match(bg, "%#000") or string.match(bg, "%#000000")) then
+        return true
+    end
+    return false
+end
+
+-- CSS margin/padding extraction (pixel approximation). Returns top/bottom
+-- spacing in px and left/right indent in px for a block element.
+local function parseBoxSpacing(attrs)
+    local out = { top = 0, bottom = 0, left = 0, right = 0 }
+    if not attrs then return out end
+    local st = parseStyle(attrs["style"])
+    local function num(v)
+        if not v then return nil end
+        v = string.gsub(v, "%%", "")
+        local n = tonumber(v)
+        if not n then return nil end
+        return math.floor(n / 2)
+    end
+    -- margin: all | v h | t r b l
+    local m = st["margin"]
+    if m then
+        local t, r, b, l
+        local parts = {}
+        for p in string.gmatch(m, "[^%s,]+") do parts[#parts + 1] = p end
+        if #parts == 1 then t, r, b, l = num(parts[1]), num(parts[1]), num(parts[1]), num(parts[1])
+        elseif #parts == 2 then t, r, b, l = num(parts[1]), num(parts[2]), num(parts[1]), num(parts[2])
+        elseif #parts == 3 then t, r, b, l = num(parts[1]), num(parts[2]), num(parts[3]), num(parts[2])
+        elseif #parts == 4 then t, r, b, l = num(parts[1]), num(parts[2]), num(parts[3]), num(parts[4]) end
+        if t then out.top = t end
+        if b then out.bottom = b end
+        if l then out.left = l end
+        if r then out.right = r end
+    else
+        if st["margin-top"] then out.top = num(st["margin-top"]) or 0 end
+        if st["margin-bottom"] then out.bottom = num(st["margin-bottom"]) or 0 end
+        if st["margin-left"] then out.left = num(st["margin-left"]) or 0 end
+        if st["margin-right"] then out.right = num(st["margin-right"]) or 0 end
+    end
+    local p = st["padding"]
+    if p then
+        local parts = {}
+        for part in string.gmatch(p, "[^%s,]+") do parts[#parts + 1] = part end
+        if #parts == 1 then
+            out.left = out.left + (num(parts[1]) or 0)
+        elseif #parts == 2 then
+            out.left = out.left + (num(parts[2]) or 0)
+        elseif #parts == 4 then
+            out.left = out.left + (num(parts[4]) or 0)
+        end
+    else
+        if st["padding-left"] then out.left = out.left + (num(st["padding-left"]) or 0) end
+    end
+    return out
+end
+
 -- Concatenate all descendant text of an element node (used for captions,
 -- legends, summaries and option labels).
 local function concatNodeText(node)
@@ -55,7 +137,36 @@ local function validHref(raw)
     return true
 end
 
-function Document.parse(htmlString, baseUrl, mode)
+-- Serialize an inline <svg> DOM subtree back to XML for the SVG rasterizer.
+local function serializeSvgNode(n)
+    if n.kind == "text" then
+        return Entities.encode(n.text or "")
+    end
+    if n.kind == "element" then
+        local parts = { "<", n.tag }
+        for k, v in pairs(n.attrs or {}) do
+            local vv = string.gsub(v or "", '["<]', function(c)
+                return (c == '"') and "&quot;" or "&lt;"
+            end)
+            parts[#parts + 1] = " " .. k .. '="' .. vv .. '"'
+        end
+        local children = n.children or {}
+        if #children == 0 then
+            parts[#parts + 1] = "/>"
+        else
+            parts[#parts + 1] = ">"
+            for _, c in ipairs(children) do
+                parts[#parts + 1] = serializeSvgNode(c)
+            end
+            parts[#parts + 1] = "</" .. n.tag .. ">"
+        end
+        return table.concat(parts)
+    end
+    return ""
+end
+
+function Document.parse(htmlString, baseUrl, mode, opts)
+    opts = opts or {}
     if not htmlString or htmlString == "" then
         return {
             title = "Blank Page",
@@ -101,7 +212,8 @@ function Document.parse(htmlString, baseUrl, mode)
         isReaderMode = false,
         mode = mode or Constants.MODE_RAW_HTML,
         blocks = {},
-        links = {}
+        links = {},
+        maps = {}
     }
 
     -- ── Walker state ───────────────────────────────────────────────────────
@@ -120,6 +232,7 @@ function Document.parse(htmlString, baseUrl, mode)
         sup = false,
         mark = false,
         strike = false,
+        invert = false,
 
         -- Link context
         currentHref = nil,
@@ -160,7 +273,15 @@ function Document.parse(htmlString, baseUrl, mode)
         formMethod = "get",
 
         -- Nested bordered boxes (fieldset / details / dialog)
-        boxStack = {}
+        boxStack = {},
+
+        -- Interactive <details> elements: deterministic per-walk counter.
+        -- opts.detailsOpen maps counter -> open override.
+        detailsIndex = 0,
+
+        -- MathML: linearized text fallback collected while inside <math>.
+        inMath = false,
+        mathParts = {},
     }
 
     local currentBlock = nil
@@ -204,7 +325,8 @@ function Document.parse(htmlString, baseUrl, mode)
         return {
             bold = state.bold, italic = state.italic, underline = state.underline,
             code = state.code, small = state.small, big = state.big,
-            sub = state.sub, sup = state.sup, mark = state.mark, strike = state.strike
+            sub = state.sub, sup = state.sup, mark = state.mark, strike = state.strike,
+            invert = state.invert
         }
     end
 
@@ -219,6 +341,7 @@ function Document.parse(htmlString, baseUrl, mode)
         state.sup = s.sup
         state.mark = s.mark
         state.strike = s.strike
+        state.invert = s.invert
     end
 
     local function addInlineText(raw)
@@ -246,6 +369,7 @@ function Document.parse(htmlString, baseUrl, mode)
             sup = state.sup,
             mark = state.mark,
             strike = state.strike,
+            invert = state.invert,
             href = state.currentHref,
             anchorIndex = state.currentAnchorIndex,
             inert = (state.inert > 0)
@@ -278,6 +402,7 @@ function Document.parse(htmlString, baseUrl, mode)
                     italic = state.italic,
                     underline = state.underline or (state.currentHref ~= nil),
                     code = state.code,
+                    invert = state.invert,
                     href = state.currentHref,
                     anchorIndex = state.currentAnchorIndex,
                     inert = (state.inert > 0)
@@ -288,6 +413,8 @@ function Document.parse(htmlString, baseUrl, mode)
             end
         elseif state.figure and not state.figureCaptionDone then
             state.figure.caption = (state.figure.caption or "") .. text
+        elseif state.inMath then
+            state.mathParts[#state.mathParts + 1] = text
         else
             addInlineText(text)
         end
@@ -307,6 +434,8 @@ function Document.parse(htmlString, baseUrl, mode)
         if src ~= "" and not string.match(src, "tracking") and not string.match(src, "beacon") then
             if w > 360 then w = 360 end
             if h > 180 then h = 180 end
+            local usemap = attrs["usemap"] or ""
+            usemap = string.gsub(usemap, "^#", "")
             local imgBlock = {
                 type = "image",
                 src = URL.resolve(baseUrl, src),
@@ -315,6 +444,7 @@ function Document.parse(htmlString, baseUrl, mode)
                 height = h,
                 href = state.currentHref,
                 align = parseAlign(attrs),
+                usemap = usemap,
                 inert = (state.inert > 0)
             }
             if state.figure then
@@ -368,11 +498,16 @@ function Document.parse(htmlString, baseUrl, mode)
             if state.currentTableCell then
                 walkChildren(node)
             else
+                local sp = parseBoxSpacing(attrs)
                 currentBlock = {
                     type = "heading",
                     level = level,
                     inlines = {},
-                    align = parseAlign(attrs)
+                    align = parseAlign(attrs),
+                    spacingTop = sp.top,
+                    spacingBottom = sp.bottom,
+                    indent = sp.left,
+                    invert = isInvertedStyle(attrs)
                 }
                 walkChildren(node)
                 flushCurrentBlock()
@@ -387,10 +522,15 @@ function Document.parse(htmlString, baseUrl, mode)
                 return
             end
             flushCurrentBlock()
+            local sp = parseBoxSpacing(attrs)
             currentBlock = {
                 type = "paragraph",
                 inlines = {},
-                align = parseAlign(attrs)
+                align = parseAlign(attrs),
+                spacingTop = sp.top,
+                spacingBottom = sp.bottom,
+                indent = sp.left,
+                invert = isInvertedStyle(attrs)
             }
             walkChildren(node)
             flushCurrentBlock()
@@ -401,7 +541,12 @@ function Document.parse(htmlString, baseUrl, mode)
                 return
             end
             flushCurrentBlock()
-            currentBlock = { type = "blockquote", inlines = {}, align = parseAlign(attrs) }
+            local sp = parseBoxSpacing(attrs)
+            currentBlock = {
+                type = "blockquote", inlines = {}, align = parseAlign(attrs),
+                spacingTop = sp.top, spacingBottom = sp.bottom,
+                indent = sp.left + 12, invert = isInvertedStyle(attrs)
+            }
             walkChildren(node)
             flushCurrentBlock()
 
@@ -411,13 +556,15 @@ function Document.parse(htmlString, baseUrl, mode)
                 return
             end
             flushCurrentBlock()
-            currentBlock = { type = "paragraph", inlines = {}, align = "center" }
+            currentBlock = { type = "paragraph", inlines = {}, align = "center",
+                spacingTop = 0, spacingBottom = 0, indent = 0 }
             walkChildren(node)
             flushCurrentBlock()
 
         elseif tag == "marquee" then
             flushCurrentBlock()
-            currentBlock = { type = "paragraph", inlines = {}, align = "center" }
+            currentBlock = { type = "paragraph", inlines = {}, align = "center",
+                spacingTop = 0, spacingBottom = 0, indent = 0 }
             walkChildren(node)
             flushCurrentBlock()
 
@@ -530,6 +677,7 @@ function Document.parse(htmlString, baseUrl, mode)
                     state.small = true
                 end
             end
+            if isInvertedStyle(attrs) then state.invert = true end
             local hadInline = #(currentBlock and currentBlock.inlines or {})
             walkChildren(node)
             -- <time datetime> and <data value> show their machine value when
@@ -544,6 +692,12 @@ function Document.parse(htmlString, baseUrl, mode)
             walkChildren(node)
         elseif tag == "rt" then
             local s = snapshotStyle(); state.small = true; walkChildren(node); restoreStyle(s)
+        elseif tag == "rp" then
+            -- Ruby fallback punctuation: shown as-is when ruby annotations are
+            -- not supported (we render rt inline, so rp shows the parens).
+            walkChildren(node)
+        elseif tag == "rb" or tag == "rtc" then
+            walkChildren(node)
 
         -- ── Links ──────────────────────────────────────────────────────────
         elseif tag == "a" then
@@ -913,6 +1067,8 @@ function Document.parse(htmlString, baseUrl, mode)
                 return
             end
             flushCurrentBlock()
+            state.detailsIndex = state.detailsIndex + 1
+            local dkey = "d" .. tostring(state.detailsIndex)
             local label = ""
             for _, c in ipairs(node.children or {}) do
                 if c.kind == "element" and c.tag == "summary" then
@@ -921,13 +1077,23 @@ function Document.parse(htmlString, baseUrl, mode)
                     break
                 end
             end
-            addBlock({ type = "box_open", label = (label ~= "" and ("> " .. label) or "") })
-            if attrs["open"] ~= nil then
+            local defaultOpen = (attrs["open"] ~= nil)
+            local isOpen = defaultOpen
+            if opts.detailsOpen and opts.detailsOpen[dkey] ~= nil then
+                isOpen = opts.detailsOpen[dkey]
+            end
+            addBlock({
+                type = "box_open",
+                label = (label ~= "" and ("> " .. label) or ""),
+                toggleKey = dkey,
+                toggleOpen = isOpen
+            })
+            if isOpen then
                 for _, c in ipairs(node.children or {}) do
                     if not (c.kind == "element" and c.tag == "summary") then walk(c) end
                 end
             end
-            addBlock({ type = "box_close" })
+            addBlock({ type = "box_close", toggleKey = dkey, toggleOpen = isOpen })
 
         elseif tag == "dialog" then
             if state.currentTableCell then
@@ -945,7 +1111,7 @@ function Document.parse(htmlString, baseUrl, mode)
 
         -- ── Media placeholders ─────────────────────────────────────────────
         elseif tag == "video" or tag == "audio" or tag == "iframe" or tag == "canvas"
-            or tag == "object" or tag == "embed" then
+            or tag == "object" or tag == "embed" or tag == "portal" then
             flushCurrentBlock()
             local src = attrs["src"] or attrs["data"]
             if src == "" or not src then
@@ -970,7 +1136,11 @@ function Document.parse(htmlString, baseUrl, mode)
             local h = tonumber(attrs["height"]) or 60
             if w > 360 then w = 360 end
             if h > 120 then h = 120 end
-            addBlock({ type = "placeholder", label = label, width = w, height = h })
+            local ph = { type = "placeholder", label = label, width = w, height = h, tag = tag }
+            if (tag == "iframe" or tag == "portal") and src and src ~= "" and validHref(src) then
+                ph.href = URL.resolve(baseUrl, src)
+            end
+            addBlock(ph)
 
         elseif tag == "progress" or tag == "meter" then
             flushCurrentBlock()
@@ -988,11 +1158,179 @@ function Document.parse(htmlString, baseUrl, mode)
                 label = attrs["title"] or ""
             })
 
+        elseif tag == "map" then
+            -- Image map: not rendered, but its <area> regions are collected so
+            -- images referencing it via usemap can be made clickable.
+            local name = string.gsub(attrs["name"] or "", "^#", "")
+            if name ~= "" then
+                local regions = {}
+                local function collectAreas(n)
+                    for _, c in ipairs(n.children or {}) do
+                        if c.kind == "element" and c.tag == "area" then
+                            local a = c.attrs or {}
+                            local shape = a["shape"] or "rect"
+                            local coords = {}
+                            for v in string.gmatch(a["coords"] or "", "%d+") do
+                                coords[#coords + 1] = tonumber(v) or 0
+                            end
+                            local href = validHref(a["href"]) and URL.resolve(baseUrl, a["href"]) or nil
+                            table.insert(regions, {
+                                shape = shape,
+                                coords = coords,
+                                href = href,
+                                alt = a["alt"] or ""
+                            })
+                        end
+                    end
+                end
+                collectAreas(node)
+                doc.maps[name] = regions
+            end
+
+        elseif tag == "datalist" then
+            -- Suggestion list for <input list="...">: options are metadata,
+            -- never rendered in flow.
+            local id = attrs["id"] or ""
+            if id ~= "" then
+                local opts = {}
+                for _, c in ipairs(node.children or {}) do
+                    if c.kind == "element" and c.tag == "option" then
+                        local text = string.gsub(concatNodeText(c), "%s+", " ")
+                        table.insert(opts, { text = text, value = (c.attrs and c.attrs["value"]) or text })
+                    end
+                end
+                doc.datalists = doc.datalists or {}
+                doc.datalists[id] = opts
+            end
+
+        elseif tag == "template" or tag == "menuitem" or tag == "content" or tag == "shadow"
+            or tag == "geolocation" then
+            -- Inert / non-rendered. template holds inert content by spec;
+            -- menuitem, content, shadow, geolocation are obsolete/experimental.
+
+        elseif tag == "fencedframe" then
+            -- Experimental replacement for iframes: render a placeholder box
+            -- like other embedded content.
+            flushCurrentBlock()
+            local w = tonumber(attrs["width"]) or 160
+            local h = tonumber(attrs["height"]) or 60
+            if w > 360 then w = 360 end
+            if h > 120 then h = 120 end
+            addBlock({ type = "placeholder", label = "[fencedframe]", width = w, height = h })
+
         elseif tag == "source" or tag == "track" or tag == "col" or tag == "colgroup"
             or tag == "area" or tag == "param" or tag == "frameset" or tag == "frame" then
             -- Void / non-rendered.
 
-        elseif tag == "script" or tag == "style" or tag == "svg" or tag == "math"
+        elseif tag == "svg" then
+            -- Inline SVG: serialize the subtree and rasterize it on-device.
+            flushCurrentBlock()
+            local xml = serializeSvgNode(node)
+            local w = tonumber(attrs["width"]) or 0
+            local h = tonumber(attrs["height"]) or 0
+            if w <= 0 or h <= 0 then
+                local vbW, vbH = string.match(attrs["viewBox"] or "", "^%s*([%-%d%.]+)%s+([%-%d%.]+)%s+([%-%d%.]+)%s+([%-%d%.]+)")
+                if w <= 0 then w = tonumber(vbW) or 0 end
+                if h <= 0 then h = tonumber(vbH) or 0 end
+            end
+            if w <= 0 then w = 120 end
+            if h <= 0 then h = 40 end
+            if w > 360 then w = 360 end
+            if h > 180 then h = 180 end
+            local ok, svgImg = pcall(function()
+                return SVGDecoder.decode(xml, w, h)
+            end)
+            if ok and svgImg then
+                addBlock({
+                    type = "image",
+                    img = svgImg,
+                    width = w,
+                    height = h,
+                    alt = attrs["role"] == "img" and (attrs["aria-label"] or attrs["title"] or "") or "",
+                    href = state.currentHref,
+                    align = parseAlign(attrs),
+                    inert = (state.inert > 0)
+                })
+            end
+
+        elseif tag == "math" then
+            -- MathML: no on-device formula rendering, so linearize the
+            -- expression to text (fractions become "a / b", scripts "x^2",
+            -- roots "√(...)") and show it as a centered math block.
+            flushCurrentBlock()
+            local wasMath = state.inMath
+            state.inMath = true
+            state.mathParts = {}
+            walkChildren(node)
+            state.inMath = wasMath
+            local s = table.concat(state.mathParts)
+            s = string.gsub(s, "%s+", " ")
+            s = string.gsub(s, "^%s*(.-)%s*$", "%1")
+            if s ~= "" then
+                addBlock({ type = "math", text = s })
+            end
+
+        elseif tag == "mfrac" then
+            local kids = node.children or {}
+            for i, c in ipairs(kids) do
+                if i > 1 then state.mathParts[#state.mathParts + 1] = " / " end
+                walk(c)
+            end
+
+        elseif tag == "msup" then
+            local kids = node.children or {}
+            for i, c in ipairs(kids) do
+                if i > 1 then state.mathParts[#state.mathParts + 1] = "^" end
+                walk(c)
+            end
+
+        elseif tag == "msub" then
+            local kids = node.children or {}
+            for i, c in ipairs(kids) do
+                if i > 1 then state.mathParts[#state.mathParts + 1] = "_" end
+                walk(c)
+            end
+
+        elseif tag == "msubsup" then
+            local kids = node.children or {}
+            for i, c in ipairs(kids) do
+                if i == 2 then state.mathParts[#state.mathParts + 1] = "_" end
+                if i == 3 then state.mathParts[#state.mathParts + 1] = "^" end
+                walk(c)
+            end
+
+        elseif tag == "msqrt" then
+            state.mathParts[#state.mathParts + 1] = "sqrt("
+            walkChildren(node)
+            state.mathParts[#state.mathParts + 1] = ")"
+
+        elseif tag == "mroot" then
+            local kids = node.children or {}
+            state.mathParts[#state.mathParts + 1] = "sqrt("
+            for i, c in ipairs(kids) do
+                if i > 1 then state.mathParts[#state.mathParts + 1] = "^(1/" end
+                if i == #kids then state.mathParts[#state.mathParts + 1] = ")" end
+                walk(c)
+            end
+            state.mathParts[#state.mathParts + 1] = ")"
+
+        elseif tag == "mfenced" then
+            local open = Entities.decode(attrs["open"] or "(")
+            local close = Entities.decode(attrs["close"] or ")")
+            local sep = Entities.decode(attrs["separators"] or ",")
+            state.mathParts[#state.mathParts + 1] = open
+            local n = 0
+            for _, c in ipairs(node.children or {}) do
+                if n > 0 then state.mathParts[#state.mathParts + 1] = sep end
+                walk(c)
+                n = n + 1
+            end
+            state.mathParts[#state.mathParts + 1] = close
+
+        elseif tag == "mspace" then
+            state.mathParts[#state.mathParts + 1] = " "
+
+        elseif tag == "script" or tag == "style"
             or tag == "title" then
             -- Non-rendered: content is stripped by the tokenizer; the DOM tree
             -- still contains the element (for possible future CSS/JS support)
@@ -1049,9 +1387,10 @@ function Document.parse(htmlString, baseUrl, mode)
             handleTextNode(node)
         elseif node.kind == "element" then
             local attrs = node.attrs or {}
-            -- Global attributes: hidden / popover elements are not rendered;
-            -- inert elements render but nothing inside is interactive.
-            if attrs["hidden"] ~= nil or attrs["popover"] ~= nil then
+            -- Global attributes: hidden / popover / display:none elements are
+            -- not rendered; inert elements render but nothing inside is
+            -- interactive.
+            if isDisplayNone(attrs) then
                 return
             end
             local wasInert = state.inert

@@ -186,6 +186,7 @@ end
 -- Decode all 63 AC coefficients into block (natural order, dequantized).
 -- Returns false on end-of-scan (marker), true otherwise.
 local function decodeAC(reader, tbl, block, qt)
+    Tasks.yieldCheck()
     local k = 1 -- zigzag position
     while k <= 63 do
         local s = decodeSymbol(reader, tbl)
@@ -392,6 +393,7 @@ local function decodeProgressiveDC(data, pos, frame, scan, dcTables, qt, restart
                     blocks = fc.h * fc.v
                 end
                 for bi = 0, blocks - 1 do
+                    Tasks.yieldCheck()
                     local idx = state.blkIdx[c]
                     state.blkIdx[c] = idx + 1
                     if refinement then
@@ -453,6 +455,7 @@ local function renderProgressiveDC(frame, state, maxW, maxH, qt)
         for mcuX = 0, mcuCols - 1 do
             for bj = 0, yfc.v - 1 do
                 for bi = 0, yfc.h - 1 do
+                    Tasks.yieldCheck()
                     local dc = state.blockDC[yc][idx] or 0
                     idx = idx + 1
                     local px = mcuX * sMaxH * 8 + bi * 8

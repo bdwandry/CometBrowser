@@ -64,23 +64,44 @@ local function decodeRawImageData(data, url, onDone)
         return
     end
 
-    local img = nil
-    local gifSig = string.sub(data, 1, 6)
+    -- PNG / GIF / WebP can also take seconds for large images on the physical
+    -- device. Run them through the cooperative task scheduler (their decoders
+    -- call Tasks.yieldCheck()) so the run loop never stalls; the Simulator is
+    -- fast enough that the synchronous path never tripped the watchdog there.
+    local asyncDecode = nil
+    if b1 == 0x89 and b2 == 0x50 and b3 == 0x4E and b4 == 0x47 then -- PNG
+        asyncDecode = function() return PNGDecoder.decode(data, 360, 200) end
+    elseif string.sub(data, 1, 4) == "RIFF" and string.sub(data, 9, 12) == "WEBP" then -- WebP
+        asyncDecode = function() return WebPDecoder.decode(data, 360, 200) end
+    elseif string.sub(data, 1, 6) == "GIF87a" or string.sub(data, 1, 6) == "GIF89a" then -- GIF
+        asyncDecode = function() return GIFDecoder.decode(data, 360, 200) end
+    end
 
-    -- WebP: RIFF....WEBP
-    if string.sub(data, 1, 4) == "RIFF" and string.sub(data, 9, 12) == "WEBP" then
-        local ok, r = pcall(function() return WebPDecoder.decode(data, 360, 200) end)
-        if ok and r then img = r end
-    -- PNG: 0x89 P N G
-    elseif b1 == 0x89 and b2 == 0x50 and b3 == 0x4E and b4 == 0x47 then
-        local ok, r = pcall(function() return PNGDecoder.decode(data, 360, 200) end)
-        if ok and r then img = r end
-    -- GIF87a / GIF89a
-    elseif gifSig == "GIF87a" or gifSig == "GIF89a" then
-        local ok, r = pcall(function() return GIFDecoder.decode(data, 360, 200) end)
-        if ok and r then img = r end
+    if asyncDecode then
+        isDecoding = true
+        Tasks.run(
+            function()
+                local ok, img = pcall(asyncDecode)
+                if not ok then error(tostring(img)) end
+                return img
+            end,
+            function(img)
+                isDecoding = false
+                onDone(img)
+            end,
+            function(err)
+                isDecoding = false
+                pcall(Logger.error, "image decode: " .. tostring(err))
+                onDone(nil)
+            end
+        )
+        return
+    end
+
+    local img = nil
+
     -- BMP: BM
-    elseif string.sub(data, 1, 2) == "BM" then
+    if string.sub(data, 1, 2) == "BM" then
         local ok, r = pcall(function() return BMPDecoder.decode(data) end)
         if ok and r then img = r end
     -- ICO / CUR: reserved(2)=0, type(2)=1 icon / 2 cursor
@@ -250,7 +271,8 @@ function ImageDecoder.draw(x, y, w, h, altText, href, isSelected, src)
 end
 
 -- Test hook: run a buffer through the format dispatch and return the decoded
--- image (or nil) synchronously. JPEG is async and is not covered by this.
+-- image (or nil) synchronously. Unused; JPEG/PNG/GIF/WebP now decode async
+-- through the task scheduler and are not covered by this.
 function ImageDecoder._testDecode(data)
     local result = nil
     decodeRawImageData(data, "test://", function(img) result = img end)

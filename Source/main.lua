@@ -9,6 +9,7 @@ import "core/http_client"
 import "core/tasks"
 import "core/cookie_jar"
 import "core/logger"
+import "core/encoding"
 import "html/document"
 import "render/style"
 import "render/layout"
@@ -300,6 +301,7 @@ runNavigation = function(urlString)
 
             local resolvedUrl = finalUrl or parsed.normalized
             currentUrlObj = URL.parse(resolvedUrl)
+            body = Encoding.toUtf8(body, headers and headers["content-type"] or nil)
             renderBody(body, resolvedUrl, true)
         end,
         onError = function(err)
@@ -400,6 +402,54 @@ end
 
 navigateTo = function(urlString)
     pendingNavUrl = urlString
+end
+
+-- ── Interactive <details> toggling ─────────────────────────────────────────────
+-- Re-parses the current document with the toggled details element forced open
+-- (or closed), re-layouts, and preserves the scroll position. No history entry
+-- is added for a toggle.
+local detailsOpenSet = {}
+
+local toggleDetails = function(dkey)
+    if not currentDoc or not currentDoc.rawHtml or isRendering then return end
+    local prevScroll = scrollY
+    local prevTarget = targetScrollY
+    isRendering = true
+    Tasks.run(
+        function()
+            detailsOpenSet[dkey] = not detailsOpenSet[dkey]
+            local parseOk, doc = pcall(function()
+                return Document.parse(
+                    currentDoc.rawHtml,
+                    currentDoc.baseUrl,
+                    currentDoc.mode,
+                    { detailsOpen = detailsOpenSet }
+                )
+            end)
+            if not parseOk then
+                error("Parse Error: " .. tostring(doc))
+            end
+            local layoutOk, lErr = pcall(function()
+                Layout.build(doc)
+            end)
+            if not layoutOk then
+                error("Layout Error: " .. tostring(lErr))
+            end
+            return doc
+        end,
+        function(doc)
+            isRendering = false
+            currentDoc = doc
+            scrollY = prevScroll
+            targetScrollY = prevTarget
+            Layout.draw(0)
+        end,
+        function(err)
+            isRendering = false
+            Logger.log("TOGGLE ERROR: " .. tostring(err))
+            detailsOpenSet[dkey] = not detailsOpenSet[dkey]
+        end
+    )
 end
 
 -- ── Top-Level App Init ────────────────────────────────────────────────────────
@@ -543,7 +593,9 @@ local function updateFrame()
                     local activeLink = LinkManager.getSelectedLink()
                     if activeLink then
                         local primary = activeLink.primaryRect or (activeLink.rects and activeLink.rects[1])
-                        if primary and primary.isFormInput and primary.inputBlock then
+                        if primary and primary.isToggle and primary.toggleKey then
+                            toggleDetails(primary.toggleKey)
+                        elseif primary and primary.isFormInput and primary.inputBlock then
                             activateFormBlock(primary.inputBlock)
                         elseif activeLink.href and not (primary and primary.inert) then
                             navigateTo(activeLink.href)
@@ -622,7 +674,9 @@ local function updateFrame()
                 local hitLink = LinkManager.getHoveredLink(mouseX, mouseY + scrollY)
                 if hitLink then
                     local primary = hitLink.primaryRect or (hitLink.rects and hitLink.rects[1])
-                    if primary and primary.isFormInput and primary.inputBlock then
+                    if primary and primary.isToggle and primary.toggleKey then
+                        toggleDetails(primary.toggleKey)
+                    elseif primary and primary.isFormInput and primary.inputBlock then
                         activateFormBlock(primary.inputBlock)
                     elseif hitLink.href and not (primary and primary.inert) then
                         navigateTo(hitLink.href)

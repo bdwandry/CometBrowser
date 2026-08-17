@@ -1,4 +1,5 @@
 -- Pure Lua Fast Deflate/Inflate Decompressor for PNG on Playdate
+import "core/tasks"
 Inflate = {}
 
 local function createBitStream(str)
@@ -223,6 +224,7 @@ function Inflate.decompress(data)
 
             -- Decode symbols
             while true do
+                Tasks.yieldCheck()
                 local sym = decodeSymbol(bs, litTable)
                 if not sym or sym == 256 then break end
 
@@ -242,6 +244,7 @@ function Inflate.decompress(data)
 
                     local srcIdx = #output - matchDist + 1
                     for i = 0, matchLen - 1 do
+                        Tasks.yieldCheck()
                         local b = output[srcIdx + i] or 0
                         table.insert(output, b)
                     end
@@ -369,6 +372,7 @@ function Inflate.createStream(data)
 
     local function pumpUntil(n)
         while not eof and #pending < n do
+            Tasks.yieldCheck()
             if mode == "uncompressed" then
                 if remaining > 0 then
                     remaining = remaining - 1

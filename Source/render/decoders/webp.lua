@@ -9,6 +9,7 @@
 import "render/decoders/dither"
 import "render/decoders/scale"
 import "render/decoders/webp_vp8_data"
+import "core/tasks"
 
 if WebPDecoder ~= nil then return end
 
@@ -500,6 +501,7 @@ local function decodeImageData(br, ctx, data, width, height)
     local lastCached = 0
 
     while src < srcEnd do
+        Tasks.yieldCheck()
         if (col & mask) == 0 then
             local metaIndex = 0
             if huffmanBits ~= 0 then
@@ -719,6 +721,7 @@ local function predictorInverse(t, in_, out, rows)
     local oOut = width
     local y = 1
     while y < rows do
+        Tasks.yieldCheck()
         local predModeBase = (y >> t.bits) * tilesPerRow
         local predModeSrc = predModeBase
         out[oOut] = addPixels(in_[iIn], out[oOut - width])
@@ -770,6 +773,7 @@ local function colorSpaceInverse(t, in_, out, rows)
     local predRow = 0
     local y = 0
     while y < rows do
+        Tasks.yieldCheck()
         local predIdx = predRow
         local m = { 0, 0, 0 }
         local srcPos = y * width
@@ -800,6 +804,7 @@ end
 
 local function addGreenToBlueAndRed(src, num, dst)
     for i = 0, num - 1 do
+        Tasks.yieldCheck()
         local argb = src[i]
         local green = (argb >> 8) & 0xFF
         local redBlue = (argb & 0x00FF00FF) + ((green << 16) | green)
@@ -817,6 +822,7 @@ local function colorIndexInverse(t, in_, out, rows)
         local bitMask = (1 << bitsPerPixel) - 1
         local idx = 0
         for y = 0, rows - 1 do
+            Tasks.yieldCheck()
             local x = 0
             local oBase = y * width
             while x + ppb <= width do
@@ -840,6 +846,7 @@ local function colorIndexInverse(t, in_, out, rows)
         end
     else
         for i = 0, rows * width - 1 do
+            Tasks.yieldCheck()
             out[i] = colorMap[(in_[i] >> 8) & 0xFF]
         end
     end
@@ -2708,6 +2715,7 @@ local function decodeVP8Payload(payload, alphaPayload)
 
     dec.mbX = 0
     for mbY = 0, dec.mbH - 1 do
+        Tasks.yieldCheck()
         dec.mbY = mbY
         local tokenBr = dec.parts[(mbY & dec.numPartsMinusOne) + 1]
         if not parseIntraModeRow(dec.br, dec) then return nil end
@@ -3006,6 +3014,7 @@ function WebPDecoder.decode(data, maxW, maxH)
     local _, _, targetW, targetH = Scale.boxSizes(w, h, maxW, maxH)
     local grayRow = {}
     for y = 0, h - 1 do
+        Tasks.yieldCheck()
         local base = y * w
         for x = 0, w - 1 do
             local argb = pix[base + x]

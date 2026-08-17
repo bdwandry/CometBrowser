@@ -21,18 +21,18 @@ local VOID = {
 -- NOTE: noscript is deliberately absent: scripting is disabled in this
 -- browser, so its fallback content must be parsed and rendered as markup
 -- (per the HTML spec "scripting disabled" rules).
--- NOTE: script, style, svg, math, title are deliberately absent: the
--- tokenizer already strips their content at the raw HTML level. If we
--- also skip them here, the DOM builder's skipDepth mechanism gets stuck
--- waiting for a closing tag the tokenizer never emits, silently losing
--- ALL subsequent body content.
+-- NOTE: script, style, title are deliberately absent: the tokenizer strips
+-- their content at the raw HTML level. svg and math ARE tokenized (their
+-- content is rendered by the SVG rasterizer / MathML text fallback), so
+-- they must not be skipped here. If we skipped them here, the DOM builder's
+-- skipDepth mechanism would get stuck waiting for a closing tag the
+-- tokenizer never emits, silently losing ALL subsequent body content.
 -- NOTE: meta, link, base are deliberately absent: they are void elements
 -- (no closing tag ever emitted by the tokenizer). If they were in
 -- SKIP_SUBTREE, encountering one in the <body> would set skipDepth=1
 -- permanently, discarding ALL subsequent tokens.
 local SKIP_SUBTREE = {
-    template = true, datalist = true, map = true, head = true,
-    rp = true, selectedcontent = true
+    template = true, head = true, selectedcontent = true
 }
 
 -- "Block" elements that imply the end of an open <p> when they start.
@@ -233,7 +233,12 @@ function DOM.build(tokens)
                     if doPush then
                         local el = { kind = "element", tag = tag, attrs = attrs, children = {} }
                         append(el)
-                        stack[#stack + 1] = el
+                        -- Self-closing tags (<mspace/>, <rect/>, <use/>) have no
+                        -- children and are not pushed: pushing them would swallow
+                        -- all subsequent siblings as their children.
+                        if not tok.isSelfClosing then
+                            stack[#stack + 1] = el
+                        end
                     end
                 end
             end

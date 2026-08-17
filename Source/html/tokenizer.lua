@@ -163,25 +163,7 @@ function Tokenizer.tokenize(html)
                 pos = len + 1
             end
 
-        -- 4. Skip <svg> ... </svg>  and  <math> ... </math>
-        elseif string.sub(head, 1, 3) == "svg" then
-            local svgClose = string.find(html, "</[sS][vV][gG]>", tagEnd, false)
-            if svgClose then
-                local nextGt = string.find(html, ">", svgClose, true)
-                pos = (nextGt or svgClose) + 1
-            else
-                pos = len + 1
-            end
-        elseif string.sub(head, 1, 4) == "math" then
-            local mathClose = string.find(html, "</[mM][aA][tT][hH]>", tagEnd, false)
-            if mathClose then
-                local nextGt = string.find(html, ">", mathClose, true)
-                pos = (nextGt or mathClose) + 1
-            else
-                pos = len + 1
-            end
-
-        -- 5. Page <title>
+        -- 4. Page <title>
         elseif string.sub(head, 1, 5) == "title" then
             local titleClose = string.find(html, "</[tT][iI][tT][lL][eE]>", tagEnd, false)
             if titleClose then

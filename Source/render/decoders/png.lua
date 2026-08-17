@@ -6,6 +6,7 @@
 import "render/decoders/dither"
 import "render/decoders/inflate"
 import "render/decoders/scale"
+import "core/tasks"
 
 PNGDecoder = {}
 
@@ -141,6 +142,7 @@ function PNGDecoder.decode(data, maxW, maxH)
 
     local done = false
     for y = 1, srcH do
+        Tasks.yieldCheck()
         local header = inflate:read(1)
         if not header then done = true break end
         local filterType = string.byte(header, 1) or 0

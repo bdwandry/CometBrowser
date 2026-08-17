@@ -10,6 +10,8 @@ local NAMED_ENTITIES = {
     ["lt"] = '<',
     ["gt"] = '>',
     ["nbsp"] = ' ',
+    ["ensp"] = ' ', ["emsp"] = ' ', ["thinsp"] = ' ', ["hairsp"] = ' ', ["zwsp"] = '',
+    ["NegativeMediumSpace"] = ' ', ["VeryThinSpace"] = ' ', ["ThinSpace"] = ' ',
     ["iexcl"] = '!',
     ["cent"] = 'c',
     ["pound"] = 'L',
@@ -29,6 +31,14 @@ local NAMED_ENTITIES = {
     ["plusmn"] = '+/-',
     ["sup2"] = '^2',
     ["sup3"] = '^3',
+    ["minus"] = '-', ["plus"] = '+', ["times"] = 'x', ["divide"] = '/',
+    ["radic"] = 'sqrt', ["infin"] = 'inf', ["ne"] = '!=', ["le"] = '<=', ["ge"] = '>=',
+    ["asymp"] = '~', ["sim"] = '~', ["cong"] = '~', ["sdot"] = '*',
+    ["in"] = 'in ', ["notin"] = 'not in ', ["sum"] = 'sum ', ["prod"] = 'prod ', ["int"] = 'int ',
+    ["part"] = 'd', ["Delta"] = 'D', ["pi"] = 'pi', ["alpha"] = 'alpha',
+    ["rarr"] = '->', ["larr"] = '<-', ["uarr"] = '^', ["darr"] = 'v',
+    ["and"] = 'and ', ["or"] = 'or ', ["not"] = 'not ',
+    ["prime"] = "'", ["Prime"] = '"', ["ang"] = 'L', ["perp"] = '_|_',
     ["acute"] = "'",
     ["micro"] = 'u',
     ["para"] = 'P',
@@ -79,6 +89,15 @@ function Entities.decode(text)
     local hasAmp  = string.find(text, "&", 1, true)
     local hasHigh = string.find(text, "[\128-\255]")
 
+    local MATH_CP = {
+        [176] = "deg", [177] = "+/-", [178] = "^2", [179] = "^3", [183] = "*",
+        [215] = "x", [247] = "/", [960] = "pi", [916] = "D",
+        [8706] = "d", [8712] = "in ", [8719] = "prod ", [8721] = "sum ",
+        [8722] = "-", [8730] = "sqrt", [8734] = "inf", [8747] = "int ",
+        [8776] = "~", [8800] = "!=", [8804] = "<=", [8805] = ">=",
+        [8592] = "<-", [8593] = "^", [8594] = "->", [8595] = "v",
+    }
+
     -- 1. Decode Decimal numeric entities &#123;
     if hasAmp then
         text = string.gsub(text, "&#(%d+);", function(dec)
@@ -90,6 +109,8 @@ function Entities.decode(text)
             if num == 8220 or num == 8221 or num == 8222 then return '"' end
             if num == 8230 then return "..." end
             if num == 8226 then return "*" end
+            local m = MATH_CP[num]
+            if m then return m end
             if num and num >= 32 and num <= 126 then
                 return string.char(num)
             end
@@ -106,6 +127,8 @@ function Entities.decode(text)
             if num == 0x201C or num == 0x201D then return '"' end
             if num == 0x2026 then return "..." end
             if num == 0x2022 then return "*" end
+            local m = MATH_CP[num]
+            if m then return m end
             if num and num >= 32 and num <= 126 then
                 return string.char(num)
             end
@@ -131,6 +154,24 @@ function Entities.decode(text)
     text = string.gsub(text, "\xe2\x80\xa6", "...")     -- horizontal ellipsis
     text = string.gsub(text, "\xe2\x80\xa2", "*")       -- bullet
     text = string.gsub(text, "\xc2\xb7", "*")           -- middle dot
+
+    -- 4b. Common math symbols to ASCII (keeps MathML/raw formulas readable)
+    text = string.gsub(text, "\xe2\x88\x92", "-")       -- − minus sign
+    text = string.gsub(text, "\xc2\xb1", "+/-")         -- ± plus-minus
+    text = string.gsub(text, "\xe2\x88\x9a", "sqrt")    -- √ square root
+    text = string.gsub(text, "\xe2\x88\x9e", "inf")     -- ∞ infinity
+    text = string.gsub(text, "\xe2\x89\xa4", "<=")      -- ≤ less-equal
+    text = string.gsub(text, "\xe2\x89\xa5", ">=")      -- ≥ greater-equal
+    text = string.gsub(text, "\xe2\x89\xa0", "!=")      -- ≠ not-equal
+    text = string.gsub(text, "\xe2\x89\x88", "~")       -- ≈ almost-equal
+    text = string.gsub(text, "\xe2\x88\x91", "sum ")    -- ∑ n-ary summation
+    text = string.gsub(text, "\xe2\x88\x8f", "prod ")   -- ∏ n-ary product
+    text = string.gsub(text, "\xe2\x88\x88", "in ")     -- ∈ element-of
+    text = string.gsub(text, "\xe2\x88\xa3", "|")       -- ∣ divides
+    text = string.gsub(text, "\xe2\x86\x92", "->")      -- → right arrow
+    text = string.gsub(text, "\xe2\x86\x90", "<-")      -- ← left arrow
+    text = string.gsub(text, "\xe2\x86\x91", "^")       -- ↑ up arrow
+    text = string.gsub(text, "\xe2\x86\x93", "v")       -- ↓ down arrow
 
     -- 5. Transliterate accented Latin characters to ASCII (keeps text readable
     --    on the Playdate font) and strip any remaining non-ASCII bytes.
@@ -186,4 +227,14 @@ function Entities.decode(text)
     end
 
     return table.concat(cleanChars)
+end
+
+-- Inverse of decode: escape text for embedding inside XML/HTML markup.
+function Entities.encode(text)
+    text = tostring(text or "")
+    text = string.gsub(text, "&", "&amp;")
+    text = string.gsub(text, "<", "&lt;")
+    text = string.gsub(text, ">", "&gt;")
+    text = string.gsub(text, '"', "&quot;")
+    return text
 end

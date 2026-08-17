@@ -173,9 +173,10 @@ end
 
 -- Emit positioned text render-items for already-broken lines, honoring the
 -- paragraph alignment (left / center / right). Also registers link hitboxes.
-local function emitFlow(lines, lineH, startX, maxW, align, startY)
+local function emitFlow(lines, lineH, startX, maxW, align, startY, opts)
     local items = {}
     local y = startY
+    opts = opts or {}
     for _, line in ipairs(lines) do
         local textW = 0
         for _, wd in ipairs(line.words) do textW = textW + wd.w end
@@ -218,6 +219,7 @@ local function emitFlow(lines, lineH, startX, maxW, align, startY)
                 big = inline.big,
                 mark = inline.mark,
                 strike = inline.strike,
+                invert = opts.invert,
                 href = inline.href,
                 anchorIndex = inline.anchorIndex
             }
@@ -283,12 +285,14 @@ function Layout.build(doc)
 
         -- 2. Headings (h1 - h6)
         elseif block.type == "heading" then
-            currentY = currentY + (block.level == 1 and 12 or 8)
+            currentY = currentY + (block.level == 1 and 12 or 8) + (block.spacingTop or 0)
             local font, lineH, marginB = Style.getHeadingFont(block.level)
             local align = normalizeAlign(block.align)
+            local indent = block.indent or 0
 
-            local lines, lh = breakLines(block.inlines, maxWidth, { font = font, lineH = lineH })
-            local items, endY = emitFlow(lines, lh, marginX, maxWidth, align, currentY)
+            local lines, lh = breakLines(block.inlines, maxWidth - indent, { font = font, lineH = lineH })
+            local items, endY = emitFlow(lines, lh, marginX + indent, maxWidth - indent, align, currentY,
+                { invert = block.invert })
             for _, it in ipairs(items) do
                 it.bold = true
                 table.insert(Layout.renderItems, it)
@@ -306,22 +310,36 @@ function Layout.build(doc)
                 currentY = currentY + 6
             end
 
-            currentY = currentY + marginB
+            currentY = currentY + marginB + (block.spacingBottom or 0)
 
-        -- 3. Paragraphs & Blockquotes
-        elseif block.type == "paragraph" or block.type == "blockquote" then
-            local isQuote = (block.type == "blockquote")
-            local blockStartX = isQuote and (marginX + 14) or marginX
-            local blockMaxW = isQuote and (maxWidth - 18) or maxWidth
-            local startQuoteY = currentY
-            local align = normalizeAlign(block.align)
-
-            local lines, lineH = breakLines(block.inlines, blockMaxW, {})
-            local items, endY = emitFlow(lines, lineH, blockStartX, blockMaxW, align, currentY)
+        -- 3. MathML linearized formulas
+        elseif block.type == "math" then
+            local startY = currentY + (block.spacingTop or 0)
+            local lines, lineH = breakLines(
+                { { type = "text", text = block.text, italic = true } },
+                maxWidth - 10, {})
+            local items, endY = emitFlow(lines, lineH, marginX + 5, maxWidth - 10, "center", startY, {})
             for _, it in ipairs(items) do
                 table.insert(Layout.renderItems, it)
             end
             currentY = endY + 10
+
+        -- 4. Paragraphs & Blockquotes
+        elseif block.type == "paragraph" or block.type == "blockquote" then
+            local isQuote = (block.type == "blockquote")
+            local indent = block.indent or 0
+            local blockStartX = (isQuote and (marginX + 14) or marginX) + indent
+            local blockMaxW = maxWidth - (isQuote and 18 or 0) - indent
+            local startQuoteY = currentY + (block.spacingTop or 0)
+            local align = normalizeAlign(block.align)
+
+            local lines, lineH = breakLines(block.inlines, blockMaxW, {})
+            local items, endY = emitFlow(lines, lineH, blockStartX, blockMaxW, align, startQuoteY,
+                { invert = block.invert })
+            for _, it in ipairs(items) do
+                table.insert(Layout.renderItems, it)
+            end
+            currentY = endY + 10 + (block.spacingBottom or 0)
 
             if isQuote then
                 table.insert(Layout.renderItems, {
@@ -425,7 +443,8 @@ function Layout.build(doc)
                 h = imgH,
                 alt = block.alt,
                 src = block.src,
-                href = block.href
+                href = block.href,
+                img = block.img
             })
 
             if block.href and not block.inert then
@@ -435,6 +454,53 @@ function Layout.build(doc)
                     w = imgW,
                     h = imgH
                 })
+            end
+
+            -- <map>/<area> image-map regions: scale coordinates from the
+            -- declared image size to the actual rendered size.
+            if block.usemap and block.usemap ~= "" and not block.inert then
+                local regions = doc.maps and doc.maps[block.usemap] or nil
+                if regions then
+                    local sx = (block.width and block.width > 0) and (imgW / block.width) or 1
+                    local sy = (block.height and block.height > 0) and (imgH / block.height) or 1
+                    for _, r in ipairs(regions) do
+                        if r.href then
+                            local shape = r.shape or "rect"
+                            local cx, cy, cw, ch
+                            if shape == "circle" then
+                                local px, py, rad = r.coords[1] or 0, r.coords[2] or 0, r.coords[3] or 0
+                                cx = imgX + (px - rad) * sx
+                                cy = currentY + (py - rad) * sy
+                                cw = (rad * 2) * sx
+                                ch = (rad * 2) * sy
+                            elseif shape == "poly" then
+                                local minX, minY, maxX, maxY = math.huge, math.huge, -math.huge, -math.huge
+                                for i = 1, math.floor(#r.coords / 2) do
+                                    local px = imgX + (r.coords[(i - 1) * 2 + 1] or 0) * sx
+                                    local py = currentY + (r.coords[(i - 1) * 2 + 2] or 0) * sy
+                                    if px < minX then minX = px end
+                                    if px > maxX then maxX = px end
+                                    if py < minY then minY = py end
+                                    if py > maxY then maxY = py end
+                                end
+                                cx, cy, cw, ch = minX, minY, maxX - minX, maxY - minY
+                            else
+                                local x1, y1 = r.coords[1] or 0, r.coords[2] or 0
+                                local x2, y2 = r.coords[3] or x1, r.coords[4] or y1
+                                cx = imgX + math.min(x1, x2) * sx
+                                cy = currentY + math.min(y1, y2) * sy
+                                cw = math.abs(x2 - x1) * sx
+                                ch = math.abs(y2 - y1) * sy
+                            end
+                            LinkManager.addLinkRect(r.href, r.alt or block.alt or "[Map Link]", {
+                                x = cx,
+                                y = cy,
+                                w = math.max(1, cw),
+                                h = math.max(1, ch)
+                            })
+                        end
+                    end
+                end
             end
 
             currentY = currentY + imgH + 12
@@ -644,6 +710,14 @@ function Layout.build(doc)
                 h = boxH,
                 label = block.label or block.text or "Media"
             })
+            if block.href and not block.inert then
+                LinkManager.addLinkRect(block.href, block.label or "Embed", {
+                    x = marginX,
+                    y = currentY,
+                    w = boxW,
+                    h = boxH
+                })
+            end
             currentY = currentY + boxH + 10
 
         -- 14. Progress / Meter Bars
@@ -673,10 +747,24 @@ function Layout.build(doc)
                 y = currentY,
                 w = maxWidth,
                 y2 = currentY,
-                label = block.label or ""
+                label = block.label or "",
+                toggleKey = block.toggleKey,
+                toggleOpen = block.toggleOpen
             }
             table.insert(Layout.renderItems, item)
             table.insert(boxStack, item)
+            if block.toggleKey then
+                -- Tap target for interactive <details> toggling.
+                LinkManager.addLinkRect("toggle:" .. block.toggleKey, block.label or "", {
+                    x = marginX,
+                    y = currentY,
+                    w = maxWidth,
+                    h = 18,
+                    isToggle = true,
+                    toggleKey = block.toggleKey,
+                    toggleOpen = block.toggleOpen or false
+                })
+            end
             currentY = currentY + 18
 
         elseif block.type == "box_close" then
@@ -704,7 +792,7 @@ function Layout.draw(scrollY)
             local drawY = item.y - scrollY
             if drawY + item.h >= Constants.CONTENT_Y and drawY <= Constants.SCREEN_HEIGHT then
                 local isSelLink = item.href and LinkManager.isHighlighted(item.href, item.x, item.y)
-                local inverted = isSelLink or item.mark
+                local inverted = isSelLink or item.mark or item.invert
                 if inverted then
                     gfx.setColor(gfx.kColorBlack)
                     gfx.fillRect(item.x - 1, drawY - 1, item.w + 2, item.h)
@@ -875,7 +963,23 @@ function Layout.draw(scrollY)
         elseif item.type == "image" then
             local drawY = item.y - scrollY
             if drawY + item.h >= Constants.CONTENT_Y and drawY <= Constants.SCREEN_HEIGHT then
-                ImageDecoder.draw(item.x, drawY, item.w, item.h, item.alt, item.href, false, item.src)
+                if item.img then
+                    -- Inline-rendered image (e.g. SVG): draw directly, scaled
+                    -- to fit the box with aspect ratio preserved.
+                    local iw, ih = item.img:getSize()
+                    if iw > 0 and ih > 0 then
+                        local scale = math.min(item.w / iw, item.h / ih)
+                        local dw = math.floor(iw * scale)
+                        local dh = math.floor(ih * scale)
+                        local dx = item.x + math.floor((item.w - dw) / 2)
+                        local dy = drawY + math.floor((item.h - dh) / 2)
+                        item.img:drawScaled(dx, dy, scale)
+                    else
+                        item.img:draw(item.x, drawY)
+                    end
+                else
+                    ImageDecoder.draw(item.x, drawY, item.w, item.h, item.alt, item.href, false, item.src)
+                end
             end
 
         elseif item.type == "input_field" then
@@ -1050,7 +1154,8 @@ function Layout.draw(scrollY)
                 if item.label and item.label ~= "" then
                     local font = Style.fontSmall or gfx.getFont()
                     gfx.setFont(font)
-                    local label = item.label
+                    local indicator = item.toggleKey and (item.toggleOpen and "[-] " or "[+] ") or ""
+                    local label = indicator .. item.label
                     local lw = Style.getTextWidth(font, label)
                     local maxLw = item.w - 14
                     if lw > maxLw then

@@ -67,6 +67,9 @@ function AddressBar.launchKeyboard()
 end
 
 function AddressBar.cancel()
+    if AddressBar.keyboardShown then
+        playdate.keyboard.hide()
+    end
     AddressBar.isOpen = false
     AddressBar.keyboardShown = false
     AddressBar.onSubmitCallback = nil

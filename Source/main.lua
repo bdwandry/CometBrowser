@@ -848,6 +848,14 @@ local function updateFrame()
     Chrome.draw(currentUrlObj, pageTitle, currentState == Constants.STATE_LOADING, progressCurrent, progressTotal, isReader)
     AddressBar.drawOverlay()
 
+    -- Hover status bar: show URL under cursor (like desktop browsers)
+    if currentState == Constants.STATE_PAGE and currentBrowseMode == Constants.MODE_RAW_HTML then
+        local hovLink = LinkManager.getHoveredLink(mouseX, mouseY + scrollY)
+        if hovLink and hovLink.href then
+            Hud.drawHoverStatus(hovLink.href)
+        end
+    end
+
     -- Draw mouse cursor as the very last thing so nothing can draw over it
     if currentState == Constants.STATE_PAGE and currentBrowseMode == Constants.MODE_RAW_HTML then
         gfx.pushContext()

@@ -40,8 +40,6 @@ local function decodeRawImageData(data, url, onDone)
 
     local b1, b2, b3, b4 = string.byte(data, 1, 4)
 
-    print("ZQIMG decode: bytes=" .. #data .. " b1=" .. string.format("0x%02X", b1) .. " b2=" .. string.format("0x%02X", b2) .. " b3=" .. string.format("0x%02X", b3) .. " b4=" .. string.format("0x%02X", b4))
-
     -- JPEG: FF D8 (async, can take seconds for big photos)
     if b1 == 0xFF and b2 == 0xD8 then
         isDecoding = true
@@ -57,7 +55,6 @@ local function decodeRawImageData(data, url, onDone)
             end,
             function(err)
                 isDecoding = false
-                pcall(Logger.error, "jpeg decode: " .. tostring(err))
                 onDone(nil)
             end
         )
@@ -91,7 +88,6 @@ local function decodeRawImageData(data, url, onDone)
             end,
             function(err)
                 isDecoding = false
-                pcall(Logger.error, "image decode: " .. tostring(err))
                 onDone(nil)
             end
         )
@@ -116,7 +112,6 @@ local function decodeRawImageData(data, url, onDone)
             if ok and r then
                 img = r
             elseif not ok then
-                pcall(Logger.error, "svg decode: " .. tostring(r))
             end
         end
     end
@@ -139,21 +134,17 @@ local function processNextImage()
 
     isDownloading = true
 
-    print("ZQIMG downloading: " .. url)
     HttpClient.get(url, {
         onSuccess = function(status, headers, body, finalUrl)
-            print("ZQIMG download OK: " .. url .. " status=" .. tostring(status) .. " bytes=" .. tostring(#(body or "")))
             if body and #body > 8 then
                 decodeRawImageData(body, url, function(img)
                     imageCache[url] = img or false
-                    print("ZQIMG decode result: " .. url .. " img=" .. tostring(img ~= nil))
                     isDownloading = false
                     playdate.timer.performAfterDelay(16, function()
                         processNextImage()
                     end)
                 end)
             else
-                print("ZQIMG download body too small: " .. url .. " bytes=" .. tostring(#(body or "")))
                 imageCache[url] = false
                 isDownloading = false
                 playdate.timer.performAfterDelay(16, function()
@@ -162,7 +153,6 @@ local function processNextImage()
             end
         end,
         onError = function(err)
-            print("ZQIMG download ERROR: " .. url .. " err=" .. tostring(err))
             imageCache[url] = false
             isDownloading = false
             playdate.timer.performAfterDelay(16, function()
@@ -195,7 +185,6 @@ function ImageDecoder.enqueue(src)
     for _, qu in ipairs(downloadQueue) do
         if qu == src then return end
     end
-    print("ZQIMG enqueue: " .. src)
     table.insert(downloadQueue, src)
 end
 
@@ -233,8 +222,6 @@ function ImageDecoder.draw(x, y, w, h, altText, href, isSelected, src)
             end
             return
         elseif cached == nil then
-            -- Enqueue for background download
-            print("ZQIMG cache miss, enqueueing: " .. src)
             ImageDecoder.enqueue(src)
         end
     end

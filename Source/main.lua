@@ -258,7 +258,6 @@ local runNavigation
 
 runNavigation = function(urlString)
     if not urlString or urlString == "" then return end
-    Logger.log("runNavigation: " .. tostring(urlString))
 
     -- Any still-running parse/render of a previous page must be dropped; its
     -- onComplete would otherwise fire later and hijack the new page.
@@ -308,7 +307,6 @@ runNavigation = function(urlString)
             progressTotal   = tot or 0
         end,
         onSuccess = function(status, headers, body, finalUrl)
-            Logger.log("fetch OK status=" .. tostring(status) .. " bytes=" .. #(body or "") .. " url=" .. tostring(finalUrl))
 
             local resolvedUrl = finalUrl or parsed.normalized
             currentUrlObj = URL.parse(resolvedUrl)
@@ -316,7 +314,6 @@ runNavigation = function(urlString)
             renderBody(body, resolvedUrl, true)
         end,
         onError = function(err)
-            Logger.log("fetch ERROR: " .. tostring(err))
             ErrorPage.show(err, parsed.normalized)
             currentState = Constants.STATE_ERROR
             pageTitle    = "Connection Error"
@@ -333,7 +330,6 @@ executeNavigation = function(urlString)
         runNavigation(urlString)
     end)
     if not ok then
-        Logger.error("executeNavigation: " .. tostring(err))
         ErrorPage.show("Navigation Error: " .. tostring(err), urlString)
         currentState = Constants.STATE_ERROR
         pageTitle    = "Navigation Error"
@@ -353,8 +349,6 @@ renderBody = function(body, url, addToHistory)
     pageTitle       = "Rendering..."
     currentState    = Constants.STATE_LOADING
 
-    Logger.log("renderBody START url=" .. url .. " mode=" .. tostring(currentBrowseMode) .. " bodyLen=" .. tostring(#(body or "")))
-
     Tasks.run(
         function()
             local parseOk, doc = pcall(function()
@@ -370,9 +364,6 @@ renderBody = function(body, url, addToHistory)
             if not layoutOk then
                 error("Layout Error: " .. tostring(lErr))
             end
-
-            Logger.log("parse ok reader=" .. tostring(doc.isReaderMode) .. " blocks=" .. tostring(#(doc.blocks or {})))
-            Logger.log("layout ok items=" .. tostring(#(Layout.renderItems or {})))
 
             return doc
         end,
@@ -397,12 +388,9 @@ renderBody = function(body, url, addToHistory)
                     ImageDecoder.enqueue(blk.src)
                 end
             end
-            Logger.log("IMAGE enqueue: " .. imgCount .. " image blocks found")
-            Logger.log("RENDER COMPLETE: state=" .. currentState .. " title=" .. (pageTitle or ""))
         end,
         function(err)
             isRendering = false
-            Logger.log("RENDER ERROR: " .. tostring(err))
             ErrorPage.show(err, url)
             currentState = Constants.STATE_ERROR
             pageTitle    = "Render Error"
@@ -457,7 +445,6 @@ local toggleDetails = function(dkey)
         end,
         function(err)
             isRendering = false
-            Logger.log("TOGGLE ERROR: " .. tostring(err))
             detailsOpenSet[dkey] = not detailsOpenSet[dkey]
         end
     )

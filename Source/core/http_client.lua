@@ -248,7 +248,6 @@ function HttpClient.isLoading()
 end
 
 local function doGet(urlString, callbacks)
-    Logger.log("doGet: " .. tostring(urlString))
     callbacks        = callbacks or {}
     activeCallbacks  = callbacks
     activeUrl        = urlString
@@ -286,7 +285,6 @@ local function doGet(urlString, callbacks)
     activeParsed  = parsed
 
     if not parsed.host or parsed.host == "" then
-        Logger.log("doGet ERROR: invalid URL (no hostname): " .. tostring(urlString))
         if callbacks.onError then callbacks.onError("Invalid URL (no hostname): " .. urlString) end
         reset()
         return false
@@ -295,7 +293,6 @@ local function doGet(urlString, callbacks)
     -- ── Network availability check ────────────────────────────────────────
     local net = playdate.network
     if not net or not net.tcp then
-        Logger.log("doGet ERROR: networking not available")
         if callbacks.onError then callbacks.onError("Networking not available.") end
         reset()
         return false
@@ -308,7 +305,6 @@ local function doGet(urlString, callbacks)
         tcp = net.tcp.new(parsed.host, parsed.port, parsed.isSsl, "CometBrowser Web Browsing")
     end)
     if not ok or not tcp then
-        Logger.log("doGet ERROR: could not create connection to " .. tostring(parsed.host))
         if callbacks.onError then callbacks.onError("Could not open connection to " .. parsed.host) end
         reset()
         return false
@@ -336,8 +332,6 @@ local function doGet(urlString, callbacks)
         end)
     end)
     if not regOk then
-        print("ZQCONN-REGCB-ERR: " .. tostring(regErr))
-        Logger.log("doGet ERROR: could not set up connection to " .. tostring(parsed.host) .. ": " .. tostring(regErr))
         if callbacks.onError then
             callbacks.onError("Could not set up connection to " .. parsed.host .. ": " .. tostring(regErr))
         end
@@ -356,7 +350,6 @@ local function doGet(urlString, callbacks)
                     return
                 end
                 if not connected then
-                    Logger.log("doGet ERROR: connect failed for " .. tostring(parsed.host) .. ": " .. tostring(err))
                     openFailed = true
                     errorMessage = "Connection failed" .. (err and (": " .. tostring(err)) or ".")
                     requestState = "error"
@@ -367,9 +360,7 @@ local function doGet(urlString, callbacks)
         end)
     end)
     if not openOk then
-        print("ZQCONN-OPEN-ERR: " .. tostring(openErr))
-        Logger.log("doGet ERROR: tcp:open failed for " .. tostring(parsed.host) .. ": " .. tostring(openErr))
-        if callbacks.onError then callbacks.onError("Could not open connection to " .. parsed.host .. ": " .. tostring(openErr)) end
+        if callbacks.onError then callbacks.onError("Could not open connection to " .. parsed.host) end
         reset()
         return false
     end
@@ -386,7 +377,6 @@ function HttpClient.get(urlString, callbacks)
     pendingRedirectUrl = nil
     pendingRedirectCallbacks = nil
     redirectDepth = 0
-    Logger.log("HttpClient.get: " .. tostring(urlString))
 
     return doGet(urlString, callbacks)
 end
@@ -400,8 +390,6 @@ function HttpClient.update()
         local cb = pendingRedirectCallbacks
         pendingRedirectUrl = nil
         pendingRedirectCallbacks = nil
-        print("ZQREDIRECT " .. redirectDepth .. " -> " .. tostring(u))
-        Logger.log("redirect -> " .. tostring(u))
         doGet(u, cb)
         return
     end
@@ -413,8 +401,6 @@ function HttpClient.update()
     -- Timeout watchdog
     if requestState == "connecting" or requestState == "reading" then
         if now - requestStart > REQUEST_TIMEOUT_MS then
-            print("ZQ watchdog fired state=" .. requestState .. " buf=" .. #requestBuffer)
-            Logger.log("watchdog fired state=" .. tostring(requestState) .. " buf=" .. tostring(#requestBuffer))
             if #requestBuffer > 512 then
                 -- We got some data — treat as done rather than fail silently
                 requestState = "done"
@@ -435,7 +421,6 @@ function HttpClient.update()
         if wok and wsent then
             requestState = "reading"
         else
-            Logger.log("doGet ERROR: write failed for " .. tostring(activeUrl) .. ": " .. tostring(werr or "?"))
             errorMessage = "Send failed: " .. tostring(werr or "?")
             requestState = "error"
         end
@@ -469,7 +454,6 @@ function HttpClient.update()
                 local terr = nil
                 pcall(function() terr = activeTcp:getError() end)
                 if terr and terr ~= "" and terr ~= "Connection closed" then
-                    Logger.log("read error: " .. tostring(terr))
                 end
             end
         end
@@ -487,9 +471,7 @@ function HttpClient.update()
                 if redirectDepth <= MAX_REDIRECTS then
                     pendingRedirectUrl = URL.resolve(activeUrl, loc)
                     pendingRedirectCallbacks = activeCallbacks
-                    Logger.log("redirect " .. redirectDepth .. " -> " .. tostring(pendingRedirectUrl))
                 else
-                    Logger.log("redirect too many -> " .. tostring(activeUrl))
                     errorMessage = "Too many redirects to " .. tostring(activeUrl)
                     requestState = "error"
                 end
@@ -538,14 +520,8 @@ function HttpClient.update()
 
         reset()
 
-        Logger.log("request done status=" .. tostring(savedStatus) .. " bytes=" .. tostring(#savedBody) .. " url=" .. tostring(savedUrl))
-
         if savedCallbacks and savedCallbacks.onSuccess then
-            local ok, err = pcall(savedCallbacks.onSuccess, savedStatus, savedHeaders, savedBody, savedUrl)
-            if not ok then
-                print("ZQCB-ERR (onSuccess): " .. tostring(err))
-                Logger.error("onSuccess dispatch: " .. tostring(err))
-            end
+            savedCallbacks.onSuccess(savedStatus, savedHeaders, savedBody, savedUrl)
         end
 
     elseif requestState == "error" then
@@ -555,14 +531,8 @@ function HttpClient.update()
 
         reset()
 
-        Logger.log("request ERROR: " .. tostring(savedErr) .. " url=" .. tostring(savedUrl))
-
         if savedCallbacks and savedCallbacks.onError then
-            local ok, err = pcall(savedCallbacks.onError, savedErr)
-            if not ok then
-                print("ZQCB-ERR (onError): " .. tostring(err))
-                Logger.error("onError dispatch: " .. tostring(err))
-            end
+            savedCallbacks.onError(savedErr)
         end
     end
 end

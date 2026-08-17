@@ -31,7 +31,6 @@ function Logger.init()
         end
     end)
     seq = 0
-    Logger.log("Logger initialized")
 end
 
 function Logger.log(msg)

@@ -444,7 +444,6 @@ function SVGDecoder.decode(xmlString, maxW, maxH)
     gfx.popContext()
 
     if not ok then
-        print("SVG decode error: " .. tostring(drawErr))
         return nil
     end
     if (ok and drawErr or 0) == 0 then return nil end

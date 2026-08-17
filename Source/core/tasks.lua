@@ -100,23 +100,14 @@ function Tasks.update()
                 table.remove(queue, 1)
                 Tasks.scheduleGC()
                 if task.onComplete then
-                    local cok, cerr = pcall(task.onComplete, task.result)
-                    if not cok then
-                        print("ZQTASK-CB-ERR: " .. tostring(cerr))
-                        pcall(Logger.error, "task onComplete: " .. tostring(cerr))
-                    end
+                    pcall(task.onComplete, task.result)
                 end
             end
         else
-            print("ZQTASK-ERR: " .. tostring(result))
-            pcall(Logger.error, "task error: " .. tostring(result))
             table.remove(queue, 1)
             Tasks.scheduleGC()
             if task.onError then
-                local eok, eerr = pcall(task.onError, tostring(result))
-                if not eok then
-                    print("ZQTASK-ERR2: " .. tostring(eerr))
-                end
+                pcall(task.onError, tostring(result))
             end
         end
     end

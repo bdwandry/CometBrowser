@@ -19,6 +19,7 @@ Constants.STATE_PAGE = "page"
 Constants.STATE_ERROR = "error"
 Constants.STATE_BOOKMARKS = "bookmarks"
 Constants.STATE_HISTORY = "history"
+Constants.STATE_SETTINGS = "settings"
 
 -- 100% Pure On-Device Browsing Modes
 Constants.MODE_READER   = "reader"

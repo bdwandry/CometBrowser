@@ -22,6 +22,7 @@ import "ui/error_page"
 import "ui/bookmarks_page"
 import "ui/history_page"
 import "ui/hud"
+import "ui/settings_page"
 
 local gfx = playdate.graphics
 
@@ -237,49 +238,58 @@ end
 
 -- ── System Menu ───────────────────────────────────────────────────────────────
 updateSystemMenu = function()
-    local menu = playdate.getSystemMenu()
-    menu:removeAllMenuItems()
+    local ok, menu = pcall(function() return playdate.getSystemMenu() end)
+    if not ok or not menu then return end
+    pcall(function() menu:removeAllMenuItems() end)
 
-    menu:addMenuItem("Home-Page", function()
-        pendingNavUrl = "about:home"
+    pcall(function()
+        menu:addMenuItem("Home-Page", function()
+            pendingNavUrl = "about:home"
+        end)
     end)
 
     if currentState == Constants.STATE_PAGE and currentUrlObj and currentUrlObj.scheme ~= "about" then
         local initialVal = "Reader"
         if currentBrowseMode == Constants.MODE_RAW_HTML then initialVal = "HTML" end
 
-        menu:addOptionsMenuItem("View", { "Reader", "HTML" }, initialVal, function(value)
-            if value == "Reader" then currentBrowseMode = Constants.MODE_READER
-            elseif value == "HTML" then currentBrowseMode = Constants.MODE_RAW_HTML end
+        pcall(function()
+            menu:addOptionsMenuItem("View", { "Reader", "HTML" }, initialVal, function(value)
+                if value == "Reader" then currentBrowseMode = Constants.MODE_READER
+                elseif value == "HTML" then currentBrowseMode = Constants.MODE_RAW_HTML end
 
-            Storage.settings.mode = currentBrowseMode
-            Storage.save()
+                Storage.settings.mode = currentBrowseMode
+                Storage.save()
 
-            if currentUrlObj then
-                -- The page body is already in memory (Document keeps it in
-                -- doc.rawHtml for both modes), so switching views only needs a
-                -- re-parse/re-layout -- never a re-download.
-                if currentDoc and currentDoc.rawHtml and currentDoc.rawHtml ~= "" then
-                    renderBody(currentDoc.rawHtml, currentUrlObj.normalized, false)
-                else
-                    navigateTo(currentUrlObj.normalized)
+                if currentUrlObj then
+                    if currentDoc and currentDoc.rawHtml and currentDoc.rawHtml ~= "" then
+                        renderBody(currentDoc.rawHtml, currentUrlObj.normalized, false)
+                    else
+                        navigateTo(currentUrlObj.normalized)
+                    end
                 end
-            end
+            end)
         end)
     end
 
-    menu:addMenuItem("Bookmarks", function()
-        BookmarksPage.open()
-        currentState = Constants.STATE_BOOKMARKS
+    pcall(function()
+        menu:addMenuItem("Settings", function()
+            local st = currentState
+            SettingsPage.open(st)
+            currentState = Constants.STATE_SETTINGS
+        end)
     end)
 
-    menu:addMenuItem("History", function()
-        HistoryPage.open()
-        currentState = Constants.STATE_HISTORY
+    pcall(function()
+        menu:addMenuItem("History", function()
+            HistoryPage.open()
+            currentState = Constants.STATE_HISTORY
+        end)
     end)
 
-    menu:addMenuItem("Clear Cookies", function()
-        CookieJar.clear()
+    pcall(function()
+        menu:addMenuItem("Clear Cookies", function()
+            CookieJar.clear()
+        end)
     end)
 end
 
@@ -497,6 +507,24 @@ CookieJar.prune()
 Logger.init()
 Style.init()
 HomePage.reset()
+HomePage.settingsCallback = function()
+    Logger.log("HomePage.settingsCallback: Opening settings from home")
+    SettingsPage.open(Constants.STATE_HOME)
+    currentState = Constants.STATE_SETTINGS
+end
+SettingsPage.onChangeCallback = function()
+    Logger.log("SettingsPage.onChangeCallback: mode=" .. tostring(Storage.settings.mode))
+    -- Sync browse mode from settings
+    currentBrowseMode = Storage.settings.mode or Constants.MODE_READER
+    -- Re-render current page exactly like the View menu option does
+    if currentUrlObj then
+        if currentDoc and currentDoc.rawHtml and currentDoc.rawHtml ~= "" then
+            renderBody(currentDoc.rawHtml, currentUrlObj.normalized, false)
+        else
+            navigateTo(currentUrlObj.normalized)
+        end
+    end
+end
 currentBrowseMode = Storage.settings.mode or Constants.MODE_READER
 updateSystemMenu()
 
@@ -545,7 +573,11 @@ local function updateFrame()
         crankChange = 0
         crankVelocity = 0
     elseif crankChange ~= 0 then
-        crankVelocity = crankVelocity + crankChange * 1.6
+        if Storage.settings.invertCrank then
+            crankVelocity = crankVelocity - crankChange * 1.6
+        else
+            crankVelocity = crankVelocity + crankChange * 1.6
+        end
     end
     crankVelocity = crankVelocity * 0.85
     if math.abs(crankVelocity) < 0.05 then crankVelocity = 0 end
@@ -866,6 +898,39 @@ local function updateFrame()
         if action == "close" then navigateTo("about:home")
         elseif action then navigateTo(action) end
         HistoryPage.draw(crankChange)
+
+    -- ── SETTINGS STATE ────────────────────────────────────────────────────────
+    elseif currentState == Constants.STATE_SETTINGS then
+        -- Draw whatever was behind the settings overlay (page content)
+        pcall(function()
+            if currentDoc and currentBrowseMode == Constants.MODE_RAW_HTML then
+                Layout.draw(scrollY)
+                Hud.draw(scrollY, Layout.totalHeight, LinkManager.getSelectedLink())
+            elseif currentDoc then
+                Layout.draw(scrollY)
+            end
+        end)
+        local action = SettingsPage.handleInput()
+        if action == "close" then
+            -- Cancel: return to previous state, no changes
+            local prev = SettingsPage.previousState or Constants.STATE_HOME
+            Logger.log("main: Settings cancelled, restoring state=" .. prev)
+            if prev == Constants.STATE_HOME then
+                navigateTo("about:home")
+            else
+                currentState = prev
+            end
+        elseif action == "save" then
+            -- Save: settings were applied by SettingsPage.saveAndClose()
+            local prev = SettingsPage.previousState or Constants.STATE_HOME
+            Logger.log("main: Settings saved, restoring state=" .. prev)
+            if prev == Constants.STATE_HOME then
+                navigateTo("about:home")
+            else
+                currentState = prev
+            end
+        end
+        SettingsPage.draw()
     end
 
     local isReader = (currentBrowseMode == Constants.MODE_READER)

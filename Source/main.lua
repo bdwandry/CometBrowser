@@ -420,12 +420,15 @@ renderBody = function(body, url, addToHistory)
             end
             updateSystemMenu()
 
-            -- Enqueue all images for background download
+            -- Enqueue images based on image mode setting
             local imgCount = 0
-            for _, blk in ipairs(currentDoc.blocks or {}) do
-                if blk.type == "image" and blk.src and blk.src ~= "" then
-                    imgCount = imgCount + 1
-                    ImageDecoder.enqueue(blk.src)
+            local imgMode = Storage.settings.imageMode or Constants.IMAGE_MODE_ALL
+            if imgMode == Constants.IMAGE_MODE_ALL then
+                for _, blk in ipairs(currentDoc.blocks or {}) do
+                    if blk.type == "image" and blk.src and blk.src ~= "" then
+                        imgCount = imgCount + 1
+                        ImageDecoder.enqueue(blk.src)
+                    end
                 end
             end
 
@@ -552,6 +555,9 @@ local function updateFrame()
     end
     lastFrameAtMs = nowMs
 
+    -- Reset per-frame flags
+    Layout.onDemandConsumed = false
+
     -- Live-sync on-screen keyboard text into the focused input field
     if keyboardOpen and activeInputField then
         activeInputField.value = playdate.keyboard.text or ""
@@ -676,8 +682,16 @@ local function updateFrame()
         local isHtmlMode = (currentBrowseMode == Constants.MODE_RAW_HTML)
 
         if skipInputFrames <= 0 and not keyboardOpen and not AddressBar.isOpen then
+            -- ── ON-DEMAND IMAGE OVERLAY ─────────────────────────────────────────
+            if Layout.onDemandOverlay then
+                local ovSrc = Layout.onDemandOverlay.src
+                local ovHref = Layout.onDemandOverlay.href
+                local ovAction = Layout.handleOnDemandInput()
+                if ovAction == "link" and ovHref then
+                    navigateTo(ovHref)
+                end
             -- ── READER MODE: crank scrolls up/down, D-Pad navigates links ──────
-            if not isHtmlMode then
+            elseif not isHtmlMode then
                 targetScrollY = targetScrollY + crankVelocity
 
                 -- A + Left = Back, A + Right = Forward
@@ -718,7 +732,7 @@ local function updateFrame()
                 end
 
                 -- (A) alone = Follow focused link / activate form input
-                if playdate.buttonJustPressed(playdate.kButtonA) and not playdate.buttonIsPressed(playdate.kButtonLeft) and not playdate.buttonIsPressed(playdate.kButtonRight) then
+                if playdate.buttonJustPressed(playdate.kButtonA) and not playdate.buttonIsPressed(playdate.kButtonLeft) and not playdate.buttonIsPressed(playdate.kButtonRight) and not Layout.onDemandConsumed then
                     local activeLink = LinkManager.getSelectedLink()
                     if activeLink then
                         local primary = activeLink.primaryRect or (activeLink.rects and activeLink.rects[1])
@@ -727,7 +741,12 @@ local function updateFrame()
                         elseif primary and primary.isFormInput and primary.inputBlock then
                             activateFormBlock(primary.inputBlock)
                         elseif activeLink.href and not (primary and primary.inert) then
-                            navigateTo(activeLink.href)
+                            local imgMode = Storage.settings.imageMode or Constants.IMAGE_MODE_ALL
+                            if imgMode == Constants.IMAGE_MODE_ONDEMAND and primary and primary.isImage then
+                                Layout.showOnDemandOverlay(primary.src, activeLink.href, primary.alt)
+                            else
+                                navigateTo(activeLink.href)
+                            end
                         end
                     end
                 end
@@ -794,7 +813,8 @@ local function updateFrame()
             -- is already true, so a handler nested in the else could never fire.
             if playdate.buttonJustPressed(playdate.kButtonA) and
                not playdate.buttonIsPressed(playdate.kButtonLeft) and
-               not playdate.buttonIsPressed(playdate.kButtonRight) then
+               not playdate.buttonIsPressed(playdate.kButtonRight) and
+               not Layout.onDemandConsumed then
                 local hitLink = LinkManager.getHoveredLink(mouseX, mouseY + scrollY)
                 if hitLink then
                     local primary = hitLink.primaryRect or (hitLink.rects and hitLink.rects[1])
@@ -803,7 +823,12 @@ local function updateFrame()
                     elseif primary and primary.isFormInput and primary.inputBlock then
                         activateFormBlock(primary.inputBlock)
                     elseif hitLink.href and not (primary and primary.inert) then
-                        navigateTo(hitLink.href)
+                        local imgMode = Storage.settings.imageMode or Constants.IMAGE_MODE_ALL
+                        if imgMode == Constants.IMAGE_MODE_ONDEMAND and primary and primary.isImage then
+                            Layout.showOnDemandOverlay(primary.src, hitLink.href, primary.alt)
+                        else
+                            navigateTo(hitLink.href)
+                        end
                     end
                 end
             end
@@ -812,7 +837,42 @@ local function updateFrame()
             scrollY = scrollY + (targetScrollY - scrollY) * 0.4
         end
 
+        -- Determine hovered image and manage evict/load (hover mode)
+        local imgMode = Storage.settings.imageMode or Constants.IMAGE_MODE_ALL
+        if imgMode == Constants.IMAGE_MODE_HOVER then
+            local currentHoverSrc = nil
+
+            if isHtmlMode then
+                local hovered = LinkManager.getHoveredLink(mouseX, mouseY + scrollY)
+                if hovered then
+                    local pr = hovered.primaryRect or (hovered.rects and hovered.rects[1])
+                    if pr and pr.isImage then currentHoverSrc = pr.src end
+                end
+            else
+                local selLink = LinkManager.getSelectedLink()
+                if selLink then
+                    local pr = selLink.primaryRect or (selLink.rects and selLink.rects[1])
+                    if pr and pr.isImage then currentHoverSrc = pr.src end
+                end
+            end
+
+            -- Evict the old hovered image if it changed
+            if Layout.hoveredImageSrc and Layout.hoveredImageSrc ~= currentHoverSrc then
+                ImageDecoder.evict(Layout.hoveredImageSrc)
+            end
+
+            -- Enqueue the new hovered image so it's ready for draw
+            if currentHoverSrc then
+                ImageDecoder.enqueue(currentHoverSrc)
+            end
+
+            Layout.hoveredImageSrc = currentHoverSrc
+        end
+
         Layout.draw(scrollY)
+
+        -- Evict off-screen images for viewport/hover modes
+        Layout.evictOffscreen(scrollY)
 
         Hud.draw(scrollY, Layout.totalHeight, LinkManager.getSelectedLink())
 

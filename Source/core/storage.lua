@@ -12,7 +12,9 @@ Storage.settings = {
     searchEngine = 1,
     mode = Constants.MODE_RAW_HTML,
     autoReader = false,
-    fontSize = "medium"
+    fontSize = "medium",
+    imageMode = Constants.IMAGE_MODE_VIEWPORT,
+    invertCrank = false,
 }
 
 function Storage.init()

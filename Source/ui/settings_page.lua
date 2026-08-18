@@ -82,6 +82,33 @@ local function buildOptions()
             end,
         },
         {
+            label = "Image Mode",
+            getValue = function()
+                local mode = staged.imageMode or Constants.IMAGE_MODE_ALL
+                return Constants.IMAGE_MODE_LABELS[mode] or "Render All"
+            end,
+            left = function()
+                local names = Constants.IMAGE_MODE_NAMES
+                local cur = staged.imageMode or Constants.IMAGE_MODE_ALL
+                local idx = 1
+                for i, n in ipairs(names) do
+                    if n == cur then idx = i; break end
+                end
+                idx = ((idx - 2) % #names) + 1
+                staged.imageMode = names[idx]
+            end,
+            right = function()
+                local names = Constants.IMAGE_MODE_NAMES
+                local cur = staged.imageMode or Constants.IMAGE_MODE_ALL
+                local idx = 1
+                for i, n in ipairs(names) do
+                    if n == cur then idx = i; break end
+                end
+                idx = (idx % #names) + 1
+                staged.imageMode = names[idx]
+            end,
+        },
+        {
             label = "Clear Cookies",
             getValue = function() return "" end,
             left = function() CookieJar.clear() end,
@@ -101,6 +128,7 @@ function SettingsPage.open(prevState)
         searchEngine = Storage.settings.searchEngine or 1,
         mode = Storage.settings.mode or Constants.MODE_READER,
         invertCrank = Storage.settings.invertCrank or false,
+        imageMode = Storage.settings.imageMode or Constants.IMAGE_MODE_ALL,
     }
     buildOptions()
     Logger.log("SettingsPage.open() previousState=" .. tostring(prevState))
@@ -116,11 +144,12 @@ function SettingsPage.saveAndClose()
     Storage.settings.searchEngine = staged.searchEngine
     Storage.settings.mode = staged.mode
     Storage.settings.invertCrank = staged.invertCrank
+    Storage.settings.imageMode = staged.imageMode
     Storage.save()
     if SettingsPage.onChangeCallback then
         SettingsPage.onChangeCallback()
     end
-    Logger.log("SettingsPage.saveAndClose: mode=" .. tostring(staged.mode))
+    Logger.log("SettingsPage.saveAndClose: mode=" .. tostring(staged.mode) .. " imageMode=" .. tostring(staged.imageMode))
     SettingsPage.close()
     return "save"
 end

@@ -1,6 +1,7 @@
 -- High-Performance On-Device Layout & Painting Engine for CometBrowser
 import "core/tasks"
 import "core/constants"
+import "core/storage"
 import "render/style"
 import "render/link_manager"
 import "render/image_decoder"
@@ -11,6 +12,12 @@ local gfx = playdate.graphics
 Layout.renderItems = {}
 Layout.totalHeight = 0
 Layout.selectedInputItem = nil
+
+-- Image mode state
+Layout.onDemandOverlay = nil  -- {src, href, alt, x, y, w, h} when an image click is pending
+Layout.onDemandRequested = {} -- src -> true: images the user chose to view
+Layout.onDemandConsumed = false -- true for one frame after overlay handles input
+Layout.hoveredImageSrc = nil  -- track last hovered image for evict in hover mode
 
 local function normalizeAlign(a)
     if not a then return nil end
@@ -253,6 +260,9 @@ function Layout.build(doc)
     Layout.renderItems = {}
     Layout.selectedInputItem = nil
     Layout.cellLinksRegistered = false
+    Layout.onDemandRequested = {}
+    Layout.onDemandOverlay = nil
+    Layout.hoveredImageSrc = nil
     LinkManager.clear()
 
     if not doc or not doc.blocks or #doc.blocks == 0 then
@@ -452,7 +462,10 @@ function Layout.build(doc)
                     x = imgX,
                     y = currentY,
                     w = imgW,
-                    h = imgH
+                    h = imgH,
+                    isImage = true,
+                    src = block.src,
+                    alt = block.alt,
                 })
             end
 
@@ -496,7 +509,10 @@ function Layout.build(doc)
                                 x = cx,
                                 y = cy,
                                 w = math.max(1, cw),
-                                h = math.max(1, ch)
+                                h = math.max(1, ch),
+                                isImage = true,
+                                src = block.src,
+                                alt = r.alt or block.alt,
                             })
                         end
                     end
@@ -976,22 +992,147 @@ function Layout.draw(scrollY)
         elseif item.type == "image" then
             local drawY = item.y - scrollY
             if drawY + item.h >= Constants.CONTENT_Y and drawY <= Constants.SCREEN_HEIGHT then
-                if item.img then
-                    -- Inline-rendered image (e.g. SVG): draw directly, scaled
-                    -- to fit the box with aspect ratio preserved.
-                    local iw, ih = item.img:getSize()
-                    if iw > 0 and ih > 0 then
-                        local scale = math.min(item.w / iw, item.h / ih)
-                        local dw = math.floor(iw * scale)
-                        local dh = math.floor(ih * scale)
-                        local dx = item.x + math.floor((item.w - dw) / 2)
-                        local dy = drawY + math.floor((item.h - dh) / 2)
-                        item.img:drawScaled(dx, dy, scale)
+                local imgMode = Storage.settings.imageMode or Constants.IMAGE_MODE_ALL
+
+                if imgMode == Constants.IMAGE_MODE_DISABLED then
+                    gfx.setColor(gfx.kColorWhite)
+                    gfx.fillRoundRect(item.x, drawY, item.w, item.h, 4)
+                    gfx.setColor(gfx.kColorBlack)
+                    gfx.drawRoundRect(item.x, drawY, item.w, item.h, 4)
+                    local font = Style.fontSmall or gfx.getFont()
+                    gfx.setFont(font)
+                    local lbl = "[Image Off]"
+                    local lw = Style.getTextWidth(font, lbl)
+                    gfx.drawText(lbl, item.x + math.floor((item.w - lw) / 2), drawY + math.floor(item.h / 2) - 5)
+
+                elseif imgMode == Constants.IMAGE_MODE_ONDEMAND then
+                    local isDecoded = item.src and ImageDecoder.isDecoded(item.src)
+                    local wasRequested = item.src and Layout.onDemandRequested[item.src]
+
+                    if isDecoded then
+                        -- Image was requested and decoded — draw it
+                        local cached = ImageDecoder.getImage(item.src)
+                        if cached then
+                            local iw, ih = cached:getSize()
+                            if iw > 0 and ih > 0 then
+                                local scale = math.min(item.w / iw, item.h / ih)
+                                local dw = math.floor(iw * scale)
+                                local dh = math.floor(ih * scale)
+                                local dx = item.x + math.floor((item.w - dw) / 2)
+                                local dy = drawY + math.floor((item.h - dh) / 2)
+                                cached:drawScaled(dx, dy, scale)
+                            else
+                                cached:draw(item.x, drawY)
+                            end
+                        end
+                    elseif wasRequested then
+                        -- Image requested but still downloading — show loading state
+                        gfx.setColor(gfx.kColorWhite)
+                        gfx.fillRoundRect(item.x, drawY, item.w, item.h, 4)
+                        gfx.setColor(gfx.kColorBlack)
+                        gfx.drawRoundRect(item.x, drawY, item.w, item.h, 4)
+                        for hx = item.x + 4, item.x + item.w - 4, 10 do
+                            gfx.drawLine(hx, drawY + 3, hx, drawY + item.h - 3)
+                        end
+                        local font = Style.fontSmall or gfx.getFont()
+                        gfx.setFont(font)
+                        local lbl = "Loading..."
+                        local lw = Style.getTextWidth(font, lbl)
+                        gfx.drawText(lbl, item.x + math.floor((item.w - lw) / 2), drawY + math.floor(item.h / 2) - 5)
                     else
-                        item.img:draw(item.x, drawY)
+                        -- Not yet requested — show tap prompt
+                        gfx.setColor(gfx.kColorWhite)
+                        gfx.fillRoundRect(item.x, drawY, item.w, item.h, 4)
+                        gfx.setColor(gfx.kColorBlack)
+                        gfx.drawRoundRect(item.x, drawY, item.w, item.h, 4)
+                        for hx = item.x + 4, item.x + item.w - 4, 10 do
+                            gfx.drawLine(hx, drawY + 3, hx, drawY + item.h - 3)
+                        end
+                        local iconX = item.x + math.floor(item.w / 2) - 8
+                        local iconY = drawY + math.floor(item.h / 2) - 10
+                        gfx.setColor(gfx.kColorBlack)
+                        gfx.drawRoundRect(iconX, iconY, 16, 11, 2)
+                        gfx.fillCircleAtPoint(iconX + 8, iconY + 5, 3)
+                        gfx.drawPixel(iconX + 13, iconY + 1)
+                        local font = Style.fontSmall or gfx.getFont()
+                        gfx.setFont(font)
+                        local lbl = item.href and "Tap: View/Open" or "Tap: View Image"
+                        local lw = Style.getTextWidth(font, lbl)
+                        if iconY + 18 <= drawY + item.h - 2 then
+                            gfx.drawText(lbl, item.x + math.floor((item.w - lw) / 2), iconY + 16)
+                        end
                     end
+
+                elseif imgMode == Constants.IMAGE_MODE_HOVER then
+                    local isHovered = Layout.hoveredImageSrc and item.src and (Layout.hoveredImageSrc == item.src)
+                    if isHovered then
+                        if item.src then
+                            ImageDecoder.enqueue(item.src)
+                        end
+                        if item.img then
+                            local iw, ih = item.img:getSize()
+                            if iw > 0 and ih > 0 then
+                                local scale = math.min(item.w / iw, item.h / ih)
+                                local dw = math.floor(iw * scale)
+                                local dh = math.floor(ih * scale)
+                                local dx = item.x + math.floor((item.w - dw) / 2)
+                                local dy = drawY + math.floor((item.h - dh) / 2)
+                                item.img:drawScaled(dx, dy, scale)
+                            else
+                                item.img:draw(item.x, drawY)
+                            end
+                        elseif item.src then
+                            ImageDecoder.draw(item.x, drawY, item.w, item.h, item.alt, item.href, false, item.src)
+                        end
+                    else
+                        gfx.setColor(gfx.kColorWhite)
+                        gfx.fillRoundRect(item.x, drawY, item.w, item.h, 4)
+                        gfx.setColor(gfx.kColorBlack)
+                        gfx.drawRoundRect(item.x, drawY, item.w, item.h, 4)
+                        local font = Style.fontSmall or gfx.getFont()
+                        gfx.setFont(font)
+                        local lbl = "[Hover]"
+                        local lw = Style.getTextWidth(font, lbl)
+                        gfx.drawText(lbl, item.x + math.floor((item.w - lw) / 2), drawY + math.floor(item.h / 2) - 5)
+                    end
+
+                elseif imgMode == Constants.IMAGE_MODE_VIEWPORT then
+                    if item.src then
+                        ImageDecoder.enqueue(item.src)
+                    end
+                    if item.img then
+                        local iw, ih = item.img:getSize()
+                        if iw > 0 and ih > 0 then
+                            local scale = math.min(item.w / iw, item.h / ih)
+                            local dw = math.floor(iw * scale)
+                            local dh = math.floor(ih * scale)
+                            local dx = item.x + math.floor((item.w - dw) / 2)
+                            local dy = drawY + math.floor((item.h - dh) / 2)
+                            item.img:drawScaled(dx, dy, scale)
+                        else
+                            item.img:draw(item.x, drawY)
+                        end
+                    else
+                        ImageDecoder.draw(item.x, drawY, item.w, item.h, item.alt, item.href, false, item.src)
+                    end
+
                 else
-                    ImageDecoder.draw(item.x, drawY, item.w, item.h, item.alt, item.href, false, item.src)
+                    -- IMAGE_MODE_ALL: current behavior
+                    if item.img then
+                        local iw, ih = item.img:getSize()
+                        if iw > 0 and ih > 0 then
+                            local scale = math.min(item.w / iw, item.h / ih)
+                            local dw = math.floor(iw * scale)
+                            local dh = math.floor(ih * scale)
+                            local dx = item.x + math.floor((item.w - dw) / 2)
+                            local dy = drawY + math.floor((item.h - dh) / 2)
+                            item.img:drawScaled(dx, dy, scale)
+                        else
+                            item.img:draw(item.x, drawY)
+                        end
+                    else
+                        ImageDecoder.draw(item.x, drawY, item.w, item.h, item.alt, item.href, false, item.src)
+                    end
                 end
             end
 
@@ -1204,4 +1345,128 @@ function Layout.draw(scrollY)
         gfx.setColor(gfx.kColorBlack)
         gfx.fillRect(Constants.SCREEN_WIDTH - Constants.SCROLLBAR_WIDTH, barY, Constants.SCROLLBAR_WIDTH, barH)
     end
+
+    -- On-demand overlay (drawn on top of everything)
+    if Layout.onDemandOverlay then
+        Layout.drawOnDemandOverlay()
+    end
+end
+
+-- Evict images that are outside the viewport (for viewport mode)
+function Layout.evictOffscreen(scrollY)
+    local imgMode = Storage.settings.imageMode or Constants.IMAGE_MODE_ALL
+    if imgMode ~= Constants.IMAGE_MODE_VIEWPORT then return end
+
+    local viewTop = scrollY - 200
+    local viewBottom = scrollY + Constants.CONTENT_HEIGHT + 200
+
+    for _, item in ipairs(Layout.renderItems) do
+        if item.type == "image" and item.src then
+            if item.y + item.h < viewTop or item.y > viewBottom then
+                ImageDecoder.evict(item.src)
+            end
+        end
+    end
+end
+
+-- Evict the last hovered image when cursor/selection moves away (for hover mode)
+function Layout.evictHoveredImage(currentHoveredSrc)
+    local imgMode = Storage.settings.imageMode or Constants.IMAGE_MODE_ALL
+    if imgMode ~= Constants.IMAGE_MODE_HOVER then return end
+
+    if Layout.hoveredImageSrc and Layout.hoveredImageSrc ~= currentHoveredSrc then
+        ImageDecoder.evict(Layout.hoveredImageSrc)
+        Layout.hoveredImageSrc = nil
+    end
+end
+
+-- Show the on-demand choice overlay for an image
+function Layout.showOnDemandOverlay(src, href, alt)
+    Layout.onDemandOverlay = {
+        src = src,
+        href = href,
+        alt = alt or "Image",
+    }
+end
+
+function Layout.clearOnDemandOverlay()
+    Layout.onDemandOverlay = nil
+end
+
+-- Draw the on-demand choice overlay
+function Layout.drawOnDemandOverlay()
+    local ov = Layout.onDemandOverlay
+    if not ov then return end
+
+    local isLoaded = ov.src and ImageDecoder.isDecoded(ov.src)
+
+    local boxW = 240
+    local boxH = 80
+    local boxX = math.floor((Constants.SCREEN_WIDTH - boxW) / 2)
+    local boxY = math.floor((Constants.CONTENT_Y + Constants.CONTENT_HEIGHT - boxH) / 2)
+
+    gfx.setColor(gfx.kColorWhite)
+    gfx.fillRoundRect(boxX, boxY, boxW, boxH, 8)
+    gfx.setColor(gfx.kColorBlack)
+    gfx.drawRoundRect(boxX, boxY, boxW, boxH, 8)
+
+    local fontB = Style.fontBodyBold or gfx.getFont()
+    local fontS = Style.fontSmall or gfx.getFont()
+
+    gfx.setFont(fontB)
+    gfx.setColor(gfx.kColorBlack)
+    local title = ov.alt
+    if #title > 28 then title = string.sub(title, 1, 25) .. "..." end
+    gfx.drawText(title, boxX + 12, boxY + 8)
+    gfx.drawLine(boxX + 10, boxY + 20, boxX + boxW - 10, boxY + 20)
+
+    gfx.setFont(fontS)
+    if isLoaded then
+        gfx.drawText("(A) Unload Image", boxX + 14, boxY + 30)
+    else
+        gfx.drawText("(A) View Image", boxX + 14, boxY + 30)
+    end
+    if ov.href then
+        gfx.drawText("(B) Open Link", boxX + 14, boxY + 48)
+    else
+        gfx.drawText("(B) Cancel", boxX + 14, boxY + 48)
+    end
+end
+
+-- Handle input for the on-demand overlay. Returns an action string:
+--   "view"   -> enqueue + render the image
+--   "unload" -> evict the image from cache
+--   "link"   -> navigate to href
+--   "cancel" -> dismiss overlay
+--   nil      -> no action yet
+function Layout.handleOnDemandInput()
+    if not Layout.onDemandOverlay then return nil end
+
+    if playdate.buttonJustPressed(playdate.kButtonA) then
+        local ov = Layout.onDemandOverlay
+        Layout.onDemandOverlay = nil
+        Layout.onDemandConsumed = true
+        if ov.src then
+            if ImageDecoder.isDecoded(ov.src) then
+                ImageDecoder.evict(ov.src)
+                Layout.onDemandRequested[ov.src] = nil
+                return "unload"
+            else
+                Layout.onDemandRequested[ov.src] = true
+                ImageDecoder.enqueue(ov.src)
+                return "view"
+            end
+        end
+        return "cancel"
+    elseif playdate.buttonJustPressed(playdate.kButtonB) then
+        local ov = Layout.onDemandOverlay
+        Layout.onDemandOverlay = nil
+        Layout.onDemandConsumed = true
+        if ov.href then
+            return "link"
+        end
+        return "cancel"
+    end
+
+    return nil
 end

@@ -188,6 +188,43 @@ function ImageDecoder.enqueue(src)
     table.insert(downloadQueue, src)
 end
 
+function ImageDecoder.evict(src)
+    if src and imageCache[src] ~= nil then
+        imageCache[src] = nil
+    end
+end
+
+function ImageDecoder.isDecoded(src)
+    if not src or src == "" then return false end
+    local v = imageCache[src]
+    return v ~= nil and v ~= false
+end
+
+function ImageDecoder.getImage(src)
+    if not src or src == "" then return nil end
+    local v = imageCache[src]
+    if v and v ~= false then return v end
+    return nil
+end
+
+-- Evict a single image from cache to free memory
+function ImageDecoder.evict(src)
+    if src and imageCache[src] ~= nil then
+        imageCache[src] = nil
+    end
+end
+
+-- Check if a specific image is cached (decoded or failed)
+function ImageDecoder.isCached(src)
+    return imageCache[src] ~= nil
+end
+
+-- Check if a specific image is cached and successful
+function ImageDecoder.isDecoded(src)
+    local c = imageCache[src]
+    return c ~= nil and c ~= false
+end
+
 function ImageDecoder.draw(x, y, w, h, altText, href, isSelected, src)
     x = math.floor(x or 0)
     y = math.floor(y or 0)

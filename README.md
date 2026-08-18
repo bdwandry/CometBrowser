@@ -19,7 +19,7 @@ Unlike single-purpose feed readers, CometBrowser lets you navigate to any web ad
 | **B + Right** | **Forward** in page history (while address bar is armed). |
 | **A + Left** | **Back** in page history (while on a page). |
 | **A + Right** | **Forward** in page history (while on a page). |
-| **Menu** | Open Playdate system menu (display mode, bookmarks, history, clear cookies). |
+| **Menu** | Open Playdate system menu (Home-Page, View mode, Settings, History, Clear Cookies). |
 
 ### Reader Mode
 
@@ -106,6 +106,17 @@ Unlike single-purpose feed readers, CometBrowser lets you navigate to any web ad
 - **ICO**: Favicon extraction from website icons.
 - **1-bit Dithering**: Ordered dithering for grayscale-to-monochrome conversion.
 
+### Image Rendering Modes
+Configurable via **Settings > Image Mode** (Left/Right to cycle). Controls how images are downloaded, cached, and displayed to optimize memory usage and frame rate on the physical Playdate hardware.
+
+| Mode | Behavior |
+| :--- | :--- |
+| **Render All** | Downloads and renders every image on the page in the background. Full visual fidelity at the cost of memory and initial load time. |
+| **In-View Only** (default) | Downloads images only when they scroll into the visible viewport. Automatically evicts (frees) images from memory when they scroll off-screen with a 200px buffer. Best balance of visual quality and memory on device. |
+| **On-Demand** | Shows a placeholder card for each image. Tapping an image opens a choice overlay: **(A) View Image** to download and render it, or **(B) Open Link** to follow the hyperlink. Loaded images can be tapped again to **Unload** them from memory. Maximum control over what gets downloaded. |
+| **Hover** | Shows a `[Hover]` placeholder until the cursor (HTML mode) or link selector (Reader mode) moves over the image, then temporarily loads and renders it. The image is evicted from memory as soon as the cursor/selection moves away. Good for quick previews without long-term memory cost. |
+| **Disabled** | Shows an `[Image Off]` placeholder for every image. No images are downloaded or rendered. Maximum frame rate on physical device for text-heavy browsing.
+
 ### Networking
 - **Dual-Engine HTTP/HTTPS**: Native async socket communication using Playdate OS 2.7+ (`playdate.network.http` & `https`).
 - **HTTP Redirect Handling**: Follows 301/302 redirects with depth tracking.
@@ -176,10 +187,10 @@ CometBrowser/
     ├── icon.png                # 32x32 launcher icon
     │
     ├── core/                   # Foundational systems
-    │   ├── constants.lua       # Screen geometry, view states, search engines, default bookmarks
+    │   ├── constants.lua       # Screen geometry, view states, search engines, image rendering modes
     │   ├── url.lua             # URL parser, normalizer, relative resolver, search query builder
     │   ├── http_client.lua     # Async HTTP/HTTPS client, redirect following, connection pooling
-    │   ├── storage.lua         # Persistent datastore for bookmarks & browsing history
+    │   ├── storage.lua         # Persistent datastore for bookmarks, history, & settings (image mode, search engine, browse mode)
     │   ├── cookie_jar.lua      # Session cookie persistence across requests
     │   ├── encoding.lua        # Character encoding detection (charset, BOM, chardet)
     │   ├── tasks.lua           # Cooperative task scheduler for async operations
@@ -194,10 +205,10 @@ CometBrowser/
     │
     ├── render/                 # Layout & visual rendering
     │   ├── style.lua           # Typography, font metrics, Roobert font family
-    │   ├── layout.lua          # Flow layout engine, line breaking, culling, form element rendering
+    │   ├── layout.lua          # Flow layout engine, line breaking, culling, image mode rendering, on-demand overlay, form element rendering
     │   ├── cloud_layout.lua    # Alternative layout engine for cloud/home page cards
     │   ├── link_manager.lua    # Link selection, hitbox tracking, hover detection
-    │   ├── image_decoder.lua   # Image decode dispatcher, 1-bit dithering, caching
+    │   ├── image_decoder.lua   # Image decode dispatcher, 1-bit dithering, caching, per-image evict
     │   └── decoders/           # Format-specific image decoders
     │       ├── svg.lua         # SVG path rendering (M/L/H/V/C/S/T/A/Z), transforms, styles
     │       ├── webp.lua        # WebP (VP8) lossy & lossless decoding
@@ -218,7 +229,8 @@ CometBrowser/
     │   ├── hud.lua             # Scrollbar, link preview bar, URL hover status bar
     │   ├── error_page.lua      # Error page with retry / search / home options
     │   ├── bookmarks_page.lua  # Bookmarks list & management
-    │   └── history_page.lua    # Browsing history viewer
+    │   ├── history_page.lua    # Browsing history viewer
+    │   └── settings_page.lua   # Settings overlay (search engine, browse mode, image mode, invert crank, clear cookies)
     │
     ├── fonts/                  # Roobert font family (Playdate .fnt format)
     │   ├── Roobert-20-Medium.fnt

@@ -1,7 +1,6 @@
-# CometBrowser for Playdate
+# This project has been archived due to a native C port version. It brings massive performance gains compared to the LUA version. Please review: https://github.com/bdwandry/PlutoBrowser
 
-# This project has been archived due to a native C port version. It brings massive performance gains compared to the LUA version. Please review:
-https://github.com/bdwandry/PlutoBrowser
+# CometBrowser for Playdate
 
 **CometBrowser** is a fast, standalone, general-purpose web browser built specifically for the **Playdate handheld console** and **Playdate Simulator**.
 

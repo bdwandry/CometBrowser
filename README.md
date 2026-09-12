@@ -1,5 +1,8 @@
 # CometBrowser for Playdate
 
+# This project has been archived due to a native C port version. It brings massive performance gains compared to the LUA version. Please review:
+https://github.com/bdwandry/PlutoBrowser
+
 **CometBrowser** is a fast, standalone, general-purpose web browser built specifically for the **Playdate handheld console** and **Playdate Simulator**.
 
 Unlike single-purpose feed readers, CometBrowser lets you navigate to any web address, search the internet, fill out forms, click hyperlinks, and render HTML headings, paragraphs, lists, blockquotes, code blocks, tables, and images (SVG, WebP, JPEG, PNG, GIF, BMP, ICO) with 1-bit monochrome graphics on the 400x240 sharp LCD screen.
